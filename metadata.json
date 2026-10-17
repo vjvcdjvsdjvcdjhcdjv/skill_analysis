@@ -1,0 +1,6 @@
+{
+  "name": "SkillPath AI",
+  "description": "Student strengths to career pathways with deterministic scoring, aptitude screening, and 30-day roadmaps.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
