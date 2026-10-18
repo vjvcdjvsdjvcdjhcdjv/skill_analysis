@@ -31,8 +31,6 @@ export function ImportGuestModal({
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white dark:bg-[#14262b] rounded-3xl max-w-md w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden p-6 sm:p-7 space-y-6 animate-in zoom-in-95 duration-200">
-        
-        {/* Top Header */}
         <div className="flex items-start justify-between gap-3">
           <div className="w-10 h-10 rounded-2xl bg-[#d7f78c]/30 text-[#1b4e45] dark:text-[#d7f78c] flex items-center justify-center shrink-0">
             <SparklesIcon className="w-5 h-5" />
@@ -51,11 +49,10 @@ export function ImportGuestModal({
             Import Your Guest Progress?
           </h2>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 leading-relaxed">
-            Welcome! We noticed assessment answers and roadmap progress saved locally on this browser. Would you like to upload them to your Google account?
+            Welcome! We noticed assessment answers and roadmap progress saved locally on this browser. Would you like to upload them to your account?
           </p>
         </div>
 
-        {/* Found data stats */}
         <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-2 text-xs">
           <div className="flex items-center justify-between">
             <span className="text-slate-600 dark:text-slate-400">Profile Name:</span>
@@ -71,7 +68,6 @@ export function ImportGuestModal({
           </div>
         </div>
 
-        {/* Action Buttons */}
         <div className="space-y-2.5 pt-2">
           <button
             onClick={onImport}

@@ -2,10 +2,6 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Slim Top Bar Navigation
- * [Zone 1: Wordmark]
- * [Zone 2: 5 Main Links (Home, Assessment, Quiz, Dashboard, Plan) + More ▾]
- * [Zone 3: Theme Toggle + Sign In / User Avatar Menu]
- * Never overflows or clips at 1280px or 1912px. Uses BottomTabBar under 760px.
  */
 
 import React, { useState, useRef, useEffect } from 'react';
@@ -67,7 +63,6 @@ export function TopBar({
   const avatarRef = useRef<HTMLDivElement>(null);
   const moreRef = useRef<HTMLDivElement>(null);
 
-  // 5 primary links as requested
   const primaryLinks: { id: PageId; label: string }[] = [
     { id: 'home', label: 'Home' },
     { id: 'assessment', label: 'Assessment' },
@@ -76,7 +71,6 @@ export function TopBar({
     { id: 'plan', label: 'Plan' },
   ];
 
-  // Close menus on outside click or Escape key
   useEffect(() => {
     function handleClickOutside(event: MouseEvent) {
       if (avatarRef.current && !avatarRef.current.contains(event.target as Node)) {
@@ -110,8 +104,7 @@ export function TopBar({
   return (
     <header className="sticky top-0 z-40 w-full backdrop-blur-md bg-[#f6f8f6]/95 dark:bg-[#0e1c20]/95 border-b border-slate-200/80 dark:border-slate-800/80 transition-colors">
       <div className="max-w-[1200px] mx-auto px-4 sm:px-6 h-16 flex items-center justify-between gap-3">
-        
-        {/* Zone 1: Wordmark (Properly aligned, zero text clipping) */}
+        {/* Zone 1: Wordmark */}
         <button
           onClick={() => onNavigate('home')}
           className="flex items-center gap-2.5 text-left group min-h-[44px] py-1 px-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#276459] rounded-xl transition-all shrink-0"
@@ -129,7 +122,7 @@ export function TopBar({
           </div>
         </button>
 
-        {/* Zone 2: 5 Clean Single-Line Links + More ▾ Dropdown */}
+        {/* Zone 2: 5 Links + More */}
         <nav className="hidden lg:flex items-center gap-1 text-sm font-medium text-slate-700 dark:text-slate-300">
           {primaryLinks.map((item) => {
             const isActive = activePage === item.id;
@@ -261,10 +254,8 @@ export function TopBar({
           </div>
         </nav>
 
-        {/* Zone 3: Actions + Auth (Guaranteed visible, zero overflow) */}
+        {/* Zone 3: Actions + Auth */}
         <div className="flex items-center gap-2 shrink-0">
-          
-          {/* Cloud Sync Status Dot (Compact, never overflows) */}
           {currentUser && (
             <div
               className="inline-flex items-center gap-1.5 px-2 py-1 rounded-full text-xs font-mono font-medium border border-slate-200 dark:border-slate-700"
@@ -295,7 +286,6 @@ export function TopBar({
             </div>
           )}
 
-          {/* Dark Mode Toggle */}
           <button
             onClick={onToggleDarkMode}
             aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -304,7 +294,6 @@ export function TopBar({
             {isDarkMode ? <SunIcon className="w-4 h-4 text-[#d7f78c]" /> : <MoonIcon className="w-4 h-4 text-[#17333b]" />}
           </button>
 
-          {/* User Auth: Avatar Menu when logged in, or Sign In button when logged out */}
           {currentUser ? (
             <div className="relative" ref={avatarRef}>
               <button
@@ -326,7 +315,6 @@ export function TopBar({
                 )}
               </button>
 
-              {/* Avatar Dropdown */}
               {isAvatarOpen && (
                 <div className="absolute right-0 mt-2 w-64 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/90 dark:border-slate-800 shadow-xl py-3 px-4 z-50 text-left animate-in fade-in duration-150">
                   <div className="border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -349,6 +337,7 @@ export function TopBar({
                       <span>Cloud Sync: {syncStatus}</span>
                     </div>
                   </div>
+
                   <div className="py-2 space-y-1">
                     <button
                       onClick={() => {
@@ -378,6 +367,7 @@ export function TopBar({
                       Study Vault
                     </button>
                   </div>
+
                   <div className="border-t border-slate-100 dark:border-slate-800 pt-2">
                     <button
                       onClick={() => {

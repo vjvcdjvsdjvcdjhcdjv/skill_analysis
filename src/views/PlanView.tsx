@@ -1,10 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * 30-Day Action Roadmap View:
- * Structured weekly milestones, interactive task check-offs, persistent completion tracking per career,
- * and export dossier triggers.
- * Complies with 44px tap target requirements and sequential headings.
+ * 30-Day Action Roadmap View
  */
 
 import React from 'react';
@@ -16,13 +13,9 @@ import {
 } from '../utils/scoring.ts';
 import {
   CalendarIcon,
-  CheckCircleIcon,
   CheckIcon,
   DownloadIcon,
-  SparklesIcon,
   RefreshCwIcon,
-  ArrowRightIcon,
-  InfoIcon,
 } from '../components/icons.tsx';
 
 interface PlanViewProps {
@@ -42,12 +35,10 @@ export function PlanView({
   onToggleTask,
   onResetTasks,
   onOpenExport,
-  onNavigate,
 }: PlanViewProps) {
   const currentCareer = CAREERS.find((c) => c.id === selectedCareerId) || CAREERS[0];
   const milestones: PlanMilestone[] = CAREER_PLANS[currentCareer.id] || CAREER_PLANS['frontend-developer'];
 
-  // Calculate completion percentage
   const totalTasks = milestones.reduce((sum, m) => sum + m.tasks.length, 0);
   const doneTasks = milestones.reduce(
     (sum, m) => sum + m.tasks.filter((t) => completedTasks[t.id]).length,
@@ -57,8 +48,6 @@ export function PlanView({
 
   return (
     <div className="space-y-10 pb-16">
-      
-      {/* Header and Career Selector */}
       <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
           <div>
@@ -74,7 +63,6 @@ export function PlanView({
             </p>
           </div>
 
-          {/* Career Switcher Dropdown */}
           <div className="flex flex-col sm:flex-row items-start sm:items-center gap-3">
             <label className="text-xs font-bold text-slate-700 dark:text-slate-300 whitespace-nowrap">
               Active Pathway Roadmap:
@@ -93,7 +81,6 @@ export function PlanView({
           </div>
         </div>
 
-        {/* Roadmap Progress Strip */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div className="flex-1 space-y-1.5">
             <div className="flex items-center justify-between text-xs">
@@ -111,7 +98,6 @@ export function PlanView({
               />
             </div>
           </div>
-
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={onResetTasks}
@@ -131,7 +117,6 @@ export function PlanView({
         </div>
       </div>
 
-      {/* 4 Weekly Milestones Grid */}
       <div className="space-y-6">
         {milestones.map((milestone, mIdx) => {
           const milestoneTasks = milestone.tasks;
@@ -147,7 +132,6 @@ export function PlanView({
                   : 'bg-white dark:bg-[#14262b] border-slate-200/80 dark:border-slate-800 shadow-xs'
               }`}
             >
-              {/* Milestone Header */}
               <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-4">
                 <div className="space-y-1">
                   <div className="flex items-center gap-2">
@@ -170,7 +154,6 @@ export function PlanView({
                 </div>
               </div>
 
-              {/* Task Items */}
               <div className="space-y-3 pt-5">
                 {milestoneTasks.map((task) => {
                   const isChecked = !!completedTasks[task.id];
@@ -184,7 +167,6 @@ export function PlanView({
                           : 'border-slate-200 dark:border-slate-800 bg-slate-50/40 dark:bg-slate-900/20 hover:border-slate-300'
                       }`}
                     >
-                      {/* Checkbox with min 44x44px touch area */}
                       <button
                         type="button"
                         aria-checked={isChecked}
@@ -199,7 +181,6 @@ export function PlanView({
                         {isChecked && <CheckIcon className="w-4 h-4" />}
                       </button>
 
-                      {/* Content */}
                       <div className="flex-1">
                         <div className="flex items-center justify-between gap-2">
                           <span
@@ -234,7 +215,6 @@ export function PlanView({
         })}
       </div>
 
-      {/* Starter Capstone Callout */}
       <div className="p-6 rounded-2xl bg-slate-50 dark:bg-[#14262b] border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-center justify-between gap-4">
         <div className="space-y-1">
           <div className="text-xs uppercase font-bold tracking-wider text-slate-600 dark:text-slate-400">

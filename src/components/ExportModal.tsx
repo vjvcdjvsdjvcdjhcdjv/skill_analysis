@@ -2,7 +2,6 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Export Report Modal & Generator
- * Produces clean downloadable Markdown and print-ready summary for academic advisors.
  */
 
 import React, { useState } from 'react';
@@ -50,7 +49,6 @@ export function ExportModal({
   const topCareer = careerFits[0]?.career;
   const topFit = careerFits[0]?.fitPercentage;
 
-  // Calculate plan completion %
   const totalTasks = activePlan.reduce((acc, m) => acc + m.tasks.length, 0);
   const doneTasks = activePlan.reduce(
     (acc, m) => acc + m.tasks.filter((t) => completedTasks[t.id]).length,
@@ -58,9 +56,8 @@ export function ExportModal({
   );
   const planProgress = totalTasks > 0 ? Math.round((doneTasks / totalTasks) * 100) : 0;
 
-  // Build Markdown payload
   const generateMarkdown = () => {
-    return `# SkillPath AI – Comprehensive Career Pathway Report
+    return `# SkillPath AI - Comprehensive Career Pathway Report
 Generated on: ${new Date().toLocaleDateString()}
 Tone Notice: Self-reported student strengths & objective diagnostic screening, not a clinical psychometric examination.
 
@@ -156,8 +153,6 @@ Report compiled deterministically via SkillPath AI.
   return (
     <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
       <div className="bg-white dark:bg-[#14262b] rounded-2xl max-w-2xl w-full border border-slate-200 dark:border-slate-800 shadow-2xl overflow-hidden flex flex-col max-h-[90vh]">
-        
-        {/* Header */}
         <div className="px-6 py-4 border-b border-slate-200 dark:border-slate-800 flex items-center justify-between bg-slate-50/50 dark:bg-slate-900/50">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-lg bg-[#276459]/10 text-[#1b4e45] dark:bg-[#d7f78c]/15 dark:text-[#d7f78c] flex items-center justify-center">
@@ -181,10 +176,7 @@ Report compiled deterministically via SkillPath AI.
           </button>
         </div>
 
-        {/* Content Body Preview */}
         <div className="p-6 overflow-y-auto space-y-6 text-sm text-slate-700 dark:text-slate-300">
-          
-          {/* Student Banner */}
           <div className="p-4 rounded-xl bg-[#f6f8f6] dark:bg-[#0e1c20] border border-slate-200/80 dark:border-slate-800 flex flex-col sm:flex-row justify-between sm:items-center gap-3">
             <div>
               <div className="text-xs uppercase tracking-wider text-slate-600 dark:text-slate-400 font-bold">Student Record</div>
@@ -205,7 +197,6 @@ Report compiled deterministically via SkillPath AI.
             )}
           </div>
 
-          {/* Domain Breakdown Grid */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2.5">
               Domain Competencies (Deterministic 0-100)
@@ -222,7 +213,6 @@ Report compiled deterministically via SkillPath AI.
             </div>
           </div>
 
-          {/* Aptitude Quiz Screening Status */}
           <div className="p-3.5 rounded-xl border border-slate-200 dark:border-slate-800 bg-[#f6f8f6] dark:bg-[#0e1c20] text-xs space-y-1.5">
             <div className="flex items-center justify-between">
               <span className="font-bold text-slate-900 dark:text-white flex items-center gap-1.5">
@@ -244,7 +234,6 @@ Report compiled deterministically via SkillPath AI.
             )}
           </div>
 
-          {/* Career Matches */}
           <div>
             <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300 mb-2.5">
               Ranked Career Matches
@@ -269,7 +258,6 @@ Report compiled deterministically via SkillPath AI.
             </div>
           </div>
 
-          {/* 30-Day Plan Summary */}
           <div>
             <div className="flex items-center justify-between mb-2">
               <h3 className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
@@ -287,13 +275,11 @@ Report compiled deterministically via SkillPath AI.
             </div>
           </div>
 
-          {/* Honest disclaimer notice */}
           <div className="p-3 rounded-lg bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 text-xs text-amber-900 dark:text-amber-200 leading-relaxed">
             <strong>Honest Assessment Disclaimer:</strong> These metrics reflect student self-reported confidence, practice habits, and optional coursework marks alongside a diagnostic aptitude screening. They represent exploratory compass directions and learned skills, never fixed or immutable intelligence.
           </div>
         </div>
 
-        {/* Footer Actions */}
         <div className="px-6 py-4 border-t border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/50 flex flex-wrap items-center justify-end gap-3">
           <button
             onClick={handleCopy}

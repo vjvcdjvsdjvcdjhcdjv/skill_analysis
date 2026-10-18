@@ -33,7 +33,6 @@ export function Confetti({ durationMs = 3500 }: ConfettiProps) {
 
     const colors = ['#276459', '#d7f78c', '#345e69', '#17333b', '#497e3a', '#f59e0b', '#3b82f6', '#ec4899'];
     const particleCount = 120;
-
     const particles = Array.from({ length: particleCount }).map(() => ({
       x: width * 0.5 + (Math.random() - 0.5) * 200,
       y: height * 0.35 + (Math.random() - 0.5) * 100,

@@ -1,14 +1,10 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Aptitude Quiz View (#quiz):
- * Objective diagnostic screening with Quick (12 Q) and Full (24 Q) modes.
- * Features balanced domain selection, shuffled options, gentle timer, immediate explanation,
- * difficulty-weighted accuracy, self-reported vs measured calibration, confetti,
- * animated radar comparison, and growth-mindset framing.
+ * Aptitude Quiz View (#quiz)
  */
 
-import React, { useState, useEffect, useRef, useMemo } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { PageId } from '../components/TopBar.tsx';
 import { RadarChart } from '../components/RadarChart.tsx';
 import { CountUp } from '../components/CountUp.tsx';
@@ -33,7 +29,6 @@ import {
   TrophyIcon,
   ZapIcon,
   SparklesIcon,
-  CheckCircleIcon,
   CheckIcon,
   XIcon,
   ArrowRightIcon,
@@ -48,6 +43,7 @@ import {
 } from '../components/icons.tsx';
 
 interface QuizViewProps {
+  hasSelfAssessment: boolean;
   onNavigate: (page: PageId) => void;
   selfReportedScores: Record<DomainKey, number>;
   quizAttempts: QuizAttempt[];
@@ -56,17 +52,20 @@ interface QuizViewProps {
 }
 
 export function QuizView({
+  hasSelfAssessment,
   onNavigate,
   selfReportedScores,
   quizAttempts,
   onSaveQuizAttempt,
   onClearQuizAttempts,
 }: QuizViewProps) {
-  // Quiz state: 'intro' | 'active' | 'results' | 'history'
+  const startedAt=useRef(0);
+  const finished=useRef(false);
+  const answered=useRef(new Set<string>());
+  const advanced=useRef(new Set<string>());
   const [viewState, setViewState] = useState<'intro' | 'active' | 'results' | 'history'>('intro');
   const [selectedMode, setSelectedMode] = useState<'quick' | 'full'>('quick');
 
-  // Active quiz session data
   const [questions, setQuestions] = useState<QuizQuestion[]>([]);
   const [currentIndex, setCurrentIndex] = useState<number>(0);
   const [userAnswers, setUserAnswers] = useState<Record<string, number>>({});
@@ -74,20 +73,17 @@ export function QuizView({
   const [secondsElapsed, setSecondsElapsed] = useState<number>(0);
   const [isTimerRunning, setIsTimerRunning] = useState<boolean>(false);
 
-  // Latest calculated attempt for results view
   const [currentAttempt, setCurrentAttempt] = useState<QuizAttempt | null>(() => {
     return quizAttempts.length > 0 ? quizAttempts[quizAttempts.length - 1] : null;
   });
 
-  // Confetti trigger
   const [showConfetti, setShowConfetti] = useState<boolean>(false);
 
-  // Timer hook
   useEffect(() => {
     let interval: any = null;
     if (isTimerRunning && viewState === 'active') {
       interval = setInterval(() => {
-        setSecondsElapsed((prev) => prev + 1);
+        setSecondsElapsed(Math.floor((performance.now()-startedAt.current)/1000));
       }, 1000);
     }
     return () => {
@@ -95,16 +91,15 @@ export function QuizView({
     };
   }, [isTimerRunning, viewState]);
 
-  // Format seconds into MM:SS
   const formatTime = (secs: number) => {
     const mins = Math.floor(secs / 60);
     const remaining = secs % 60;
     return `${mins}:${remaining < 10 ? '0' : ''}${remaining}`;
   };
 
-  // Start new quiz session
   const handleStartQuiz = (mode: 'quick' | 'full') => {
     const sessionQuestions = generateQuizSession(mode);
+    startedAt.current=performance.now();finished.current=false;answered.current.clear();advanced.current.clear();
     setQuestions(sessionQuestions);
     setCurrentIndex(0);
     setUserAnswers({});
@@ -116,10 +111,11 @@ export function QuizView({
     window.scrollTo({ top: 0, behavior: 'smooth' });
   };
 
-  // Handle selecting an option
   const handleSelectOption = (optionIndex: number) => {
-    if (showExplanation) return; // Prevent changing answer
+    if (showExplanation) return;
     const currentQ = questions[currentIndex];
+    if (!currentQ || answered.current.has(currentQ.id)) return;
+    answered.current.add(currentQ.id);
     setUserAnswers((prev) => ({
       ...prev,
       [currentQ.id]: optionIndex,
@@ -127,16 +123,20 @@ export function QuizView({
     setShowExplanation(true);
   };
 
-  // Proceed to next question or complete quiz
   const handleNextQuestion = () => {
+    const id=questions[currentIndex]?.id;
+    if (!id || !showExplanation || advanced.current.has(id) || finished.current) return;
+    advanced.current.add(id);
     if (currentIndex < questions.length - 1) {
       setCurrentIndex((prev) => prev + 1);
       setShowExplanation(false);
       window.scrollTo({ top: 0, behavior: 'smooth' });
     } else {
-      // Completed quiz!
+      finished.current=true;
       setIsTimerRunning(false);
-      const attempt = calculateQuizResults(questions, userAnswers, secondsElapsed, selectedMode);
+      const elapsed=Math.floor((performance.now()-startedAt.current)/1000);
+      setSecondsElapsed(elapsed);
+      const attempt = calculateQuizResults(questions, userAnswers, elapsed, selectedMode);
       setCurrentAttempt(attempt);
       onSaveQuizAttempt(attempt);
       setShowConfetti(true);
@@ -145,7 +145,6 @@ export function QuizView({
     }
   };
 
-  // Cancel / Exit quiz dialog
   const handleExitQuiz = () => {
     if (window.confirm('Are you sure you want to exit? Your current progress will not be saved.')) {
       setIsTimerRunning(false);
@@ -160,107 +159,30 @@ export function QuizView({
     design: PaletteIcon,
   };
 
-  // Computed combined scores using named constants: 0.6 * self + 0.4 * quiz
   const combinedScores: Record<DomainKey, number> = useMemo(() => {
     if (!currentAttempt) return selfReportedScores;
+    if (!hasSelfAssessment) return currentAttempt.domainScores;
     return {
       programming: calculateCombinedScore(selfReportedScores.programming, currentAttempt.domainScores.programming),
       analytical: calculateCombinedScore(selfReportedScores.analytical, currentAttempt.domainScores.analytical),
       communication: calculateCombinedScore(selfReportedScores.communication, currentAttempt.domainScores.communication),
       design: calculateCombinedScore(selfReportedScores.design, currentAttempt.domainScores.design),
     };
-  }, [selfReportedScores, currentAttempt]);
+  }, [selfReportedScores, currentAttempt, hasSelfAssessment]);
 
-  // Recalculated career fits from combined scores
   const updatedCareerFits = useMemo(() => {
     return calculateCareerFit(combinedScores);
   }, [combinedScores]);
 
-  // Current active question
   const currentQuestion: QuizQuestion | undefined = questions[currentIndex];
   const currentDomainConfig = currentQuestion ? DOMAINS[currentQuestion.domain] : null;
-  const DomainIconComponent = currentQuestion ? domainIcons[currentQuestion.domain] : CodeIcon;
-
-  // Render inline SVG for visual spatial design questions
-  const renderSvgIllustration = (svgType: QuizQuestion['svgType']) => {
-    if (svgType === 'spacing-rhythm') {
-      return (
-        <div className="my-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="block text-[11px] font-mono font-bold text-slate-500 uppercase tracking-wider mb-2">
-            Spatial Rhythm Inspector (Visual Pattern)
-          </span>
-          <svg viewBox="0 0 460 120" className="w-full max-w-md mx-auto" aria-label="Visual spacing rhythm diagram">
-            {/* Box 1 */}
-            <rect x="10" y="30" width="80" height="60" rx="8" fill="#276459" fillOpacity="0.8" />
-            <text x="50" y="65" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">Card A</text>
-            
-            {/* Gap 1: 16px */}
-            <line x1="90" y1="20" x2="106" y2="20" stroke="#1b4e45" strokeWidth="2" />
-            <text x="98" y="15" textAnchor="middle" fill="#1b4e45" fontSize="10" fontFamily="monospace">16px</text>
-
-            {/* Box 2 */}
-            <rect x="106" y="30" width="80" height="60" rx="8" fill="#276459" fillOpacity="0.8" />
-            <text x="146" y="65" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">Card B</text>
-
-            {/* Gap 2: 16px */}
-            <line x1="186" y1="20" x2="202" y2="20" stroke="#1b4e45" strokeWidth="2" />
-            <text x="194" y="15" textAnchor="middle" fill="#1b4e45" fontSize="10" fontFamily="monospace">16px</text>
-
-            {/* Box 3 */}
-            <rect x="202" y="30" width="80" height="60" rx="8" fill="#276459" fillOpacity="0.8" />
-            <text x="242" y="65" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">Card C</text>
-
-            {/* Irregular Gap: 28px highlighted in rose */}
-            <line x1="282" y1="20" x2="310" y2="20" stroke="#e11d48" strokeWidth="2.5" strokeDasharray="3,3" />
-            <text x="296" y="15" textAnchor="middle" fill="#e11d48" fontSize="10" fontFamily="monospace" fontWeight="bold">28px (!)</text>
-
-            {/* Box 4 */}
-            <rect x="310" y="30" width="80" height="60" rx="8" fill="#276459" fillOpacity="0.8" />
-            <text x="350" y="65" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">Card D</text>
-          </svg>
-        </div>
-      );
-    }
-    if (svgType === 'touch-target') {
-      return (
-        <div className="my-4 p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-          <span className="block text-[11px] font-mono font-bold text-slate-500 uppercase tracking-wider mb-2">
-            Touch Target Ergonomics (Apple HIG & Material 3 Specs)
-          </span>
-          <svg viewBox="0 0 460 110" className="w-full max-w-md mx-auto" aria-label="Touch target sizing diagram">
-            {/* Small 24px button with tap miss zone */}
-            <g transform="translate(40, 20)">
-              <rect x="0" y="10" width="48" height="24" rx="4" fill="#e2e8f0" stroke="#94a3b8" />
-              <text x="24" y="26" textAnchor="middle" fill="#64748b" fontSize="10">24px</text>
-              <circle cx="24" cy="22" r="28" fill="#f43f5e" fillOpacity="0.15" stroke="#f43f5e" strokeDasharray="2,2" />
-              <text x="24" y="68" textAnchor="middle" fill="#e11d48" fontSize="10" fontWeight="bold">High tap miss risk</text>
-            </g>
-
-            {/* Standard 44px button with safe thumb envelope */}
-            <g transform="translate(240, 10)">
-              <rect x="0" y="0" width="80" height="44" rx="8" fill="#276459" />
-              <text x="40" y="27" textAnchor="middle" fill="#ffffff" fontSize="12" fontWeight="bold">44 × 44px</text>
-              <circle cx="40" cy="22" r="28" fill="#10b981" fillOpacity="0.12" stroke="#10b981" />
-              <text x="40" y="78" textAnchor="middle" className="fill-[#1b4e45] dark:fill-[#d7f78c]" fontSize="10" fontWeight="bold">Ergonomic human thumb zone</text>
-            </g>
-          </svg>
-        </div>
-      );
-    }
-    return null;
-  };
 
   return (
     <div className="max-w-4xl mx-auto space-y-8 pb-16">
       {showConfetti && <Confetti />}
 
-      {/* ======================================================== */}
-      {/* 1. INTRO SCREEN                                          */}
-      {/* ======================================================== */}
       {viewState === 'intro' && (
         <div className="space-y-8">
-          
-          {/* Hero Header */}
           <div className="p-6 sm:p-10 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
             <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
               <ZapIcon className="w-4 h-4" />
@@ -274,8 +196,6 @@ export function QuizView({
             <p className="text-sm sm:text-base text-slate-700 dark:text-slate-300 leading-relaxed max-w-2xl">
               Calibrate your self-reported profile with real problem-solving exercises: tracing small code snippets, interpreting performance tables, reviewing communication clarity, and evaluating design hierarchy.
             </p>
-
-            {/* Honest Disclaimer Callout (Mandatory) */}
             <div className="p-4 sm:p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/40 flex items-start gap-3.5 text-xs text-amber-900 dark:text-amber-200">
               <InfoIcon className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
               <div className="space-y-1">
@@ -287,10 +207,7 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Mode Selection Cards */}
           <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-            
-            {/* Quick Mode */}
             <div
               onClick={() => setSelectedMode('quick')}
               className={`p-6 sm:p-7 rounded-3xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
@@ -334,7 +251,6 @@ export function QuizView({
               </div>
             </div>
 
-            {/* Full Mode */}
             <div
               onClick={() => setSelectedMode('full')}
               className={`p-6 sm:p-7 rounded-3xl border-2 transition-all cursor-pointer flex flex-col justify-between ${
@@ -379,7 +295,6 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Launch Action */}
           <div className="flex flex-col sm:flex-row items-center justify-between gap-4 p-6 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800">
             <div>
               <span className="font-bold text-slate-900 dark:text-white text-sm block">
@@ -409,7 +324,6 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Previous Attempt Summary Preview if exists */}
           {currentAttempt && (
             <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div className="flex items-center gap-3">
@@ -436,16 +350,9 @@ export function QuizView({
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 2. ACTIVE QUESTION SCREEN                                */}
-      {/* ======================================================== */}
       {viewState === 'active' && currentQuestion && currentDomainConfig && (
         <div className="space-y-6">
-          
-          {/* Header Bar: Progress, Timer, and Domain Badge */}
           <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-wrap items-center justify-between gap-4">
-            
-            {/* Domain Badge */}
             <div className="flex items-center gap-2">
               <span
                 className="w-3 h-3 rounded-full"
@@ -460,7 +367,6 @@ export function QuizView({
               </span>
             </div>
 
-            {/* Gentle Timer & Counter */}
             <div className="flex items-center gap-4">
               <div className="flex items-center gap-1.5 text-xs font-mono font-medium text-slate-600 dark:text-slate-300 bg-slate-100 dark:bg-slate-800 px-3 py-1 rounded-full">
                 <ClockIcon className="w-3.5 h-3.5 text-slate-500" />
@@ -479,7 +385,6 @@ export function QuizView({
               </button>
             </div>
 
-            {/* Progress Bar */}
             <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
               <div
                 className="h-full bg-[#276459] dark:bg-[#d7f78c] transition-all duration-300 rounded-full"
@@ -488,13 +393,11 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Question Prompt Card */}
           <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-5">
             <h2 className="text-lg sm:text-xl font-bold text-slate-900 dark:text-white leading-relaxed font-display">
               {currentQuestion.prompt}
             </h2>
 
-            {/* Code Snippet if applicable */}
             {currentQuestion.codeSnippet && (
               <div className="rounded-xl overflow-hidden border border-slate-800 bg-[#0e1c20] text-slate-100 p-4 font-mono text-xs sm:text-sm leading-relaxed overflow-x-auto shadow-inner">
                 <div className="flex items-center justify-between pb-2 mb-2 border-b border-slate-800 text-[10px] text-slate-400 uppercase tracking-widest">
@@ -505,7 +408,6 @@ export function QuizView({
               </div>
             )}
 
-            {/* Table Data if applicable */}
             {currentQuestion.tableData && (
               <div className="overflow-x-auto my-3 rounded-xl border border-slate-200 dark:border-slate-800">
                 <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-xs">
@@ -533,10 +435,6 @@ export function QuizView({
               </div>
             )}
 
-            {/* Visual SVG Diagram if applicable */}
-            {currentQuestion.svgType && renderSvgIllustration(currentQuestion.svgType)}
-
-            {/* 4 Options Grid */}
             <div className="space-y-3 pt-2">
               <span className="text-[11px] font-mono uppercase tracking-wider text-slate-500 font-bold block mb-1">
                 Select your answer:
@@ -544,8 +442,8 @@ export function QuizView({
               {currentQuestion.options.map((optionText, optIdx) => {
                 const isSelected = userAnswers[currentQuestion.id] === optIdx;
                 const isCorrect = optIdx === currentQuestion.correctIndex;
-                let optionClasses = 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#14262b] text-slate-800 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700';
 
+                let optionClasses = 'border-slate-200 dark:border-slate-800 bg-white dark:bg-[#14262b] text-slate-800 dark:text-slate-200 hover:border-slate-300 dark:hover:border-slate-700';
                 if (showExplanation) {
                   if (isCorrect) {
                     optionClasses = 'border-emerald-500 bg-emerald-50/70 dark:bg-emerald-950/40 text-emerald-900 dark:text-emerald-100 font-semibold ring-1 ring-emerald-500';
@@ -558,8 +456,7 @@ export function QuizView({
                   optionClasses = 'border-[#276459] dark:border-[#d7f78c] bg-[#eaf4ed] dark:bg-[#1b3d36] font-semibold ring-2 ring-[#276459]/20';
                 }
 
-                const letter = String.fromCharCode(65 + optIdx); // A, B, C, D
-
+                const letter = String.fromCharCode(65 + optIdx);
                 return (
                   <button
                     key={optIdx}
@@ -583,6 +480,7 @@ export function QuizView({
                         {optionText}
                       </span>
                     </div>
+
                     {showExplanation && (
                       <div className="shrink-0">
                         {isCorrect && (
@@ -602,7 +500,6 @@ export function QuizView({
               })}
             </div>
 
-            {/* Explanation Box (shows immediately after selection) */}
             {showExplanation && (
               <div className="pt-4 border-t border-slate-100 dark:border-slate-800 space-y-4 animate-in fade-in duration-300">
                 <div className={`p-4 rounded-2xl border text-xs sm:text-sm leading-relaxed ${
@@ -648,13 +545,8 @@ export function QuizView({
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 3. RESULTS SCREEN                                        */}
-      {/* ======================================================== */}
       {viewState === 'results' && currentAttempt && (
         <div className="space-y-10">
-          
-          {/* Header Banner */}
           <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -672,7 +564,6 @@ export function QuizView({
                 </p>
               </div>
 
-              {/* Retake & Navigation Buttons */}
               <div className="flex items-center gap-2.5">
                 <button
                   onClick={() => handleStartQuiz(currentAttempt.mode)}
@@ -690,19 +581,15 @@ export function QuizView({
               </div>
             </div>
 
-            {/* Growth Mindset Reassurance (Never fixed intelligence) */}
             <div className="p-4 rounded-xl bg-[#eaf4ed] dark:bg-[#132d27] border border-[#276459]/20 text-xs text-[#17333b] dark:text-[#d7f78c] flex items-center gap-2.5">
               <SparklesIcon className="w-4 h-4 shrink-0" />
               <span>
-                <strong>Growth-Oriented Measurement:</strong> Diagnostic scores measure active heuristic familiarity and current debugging habits – never innate capacity or fixed intelligence. Every domain compounds steadily with targeted practice.
+                <strong>Growth-Oriented Measurement:</strong> Diagnostic scores measure active heuristic familiarity and current debugging habits — never innate capacity or fixed intelligence. Every domain compounds steadily with targeted practice.
               </span>
             </div>
           </div>
 
-          {/* Key Metric Highlight Hero */}
           <div className="grid grid-cols-1 sm:grid-cols-3 gap-4">
-            
-            {/* Overall Score */}
             <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
                 Overall Measured Score
@@ -716,7 +603,6 @@ export function QuizView({
               </span>
             </div>
 
-            {/* Questions Accuracy */}
             <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
                 Total Solved Correctly
@@ -730,7 +616,6 @@ export function QuizView({
               </span>
             </div>
 
-            {/* Strongest Aptitude */}
             <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between">
               <span className="text-xs font-semibold text-slate-500 uppercase tracking-wider block">
                 Dominant Aptitude Peak
@@ -744,17 +629,14 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Animated Radar Comparison + Domain Breakdown */}
           <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-center">
-            
-            {/* Left: Radar Chart */}
             <div className="lg:col-span-5 flex flex-col items-center justify-center p-6 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
               <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500 mb-2">
                 Measured Quiz vs Baseline Self-Report
               </span>
               <RadarChart
                 scores={currentAttempt.domainScores}
-                previousScores={selfReportedScores}
+                previousScores={hasSelfAssessment ? selfReportedScores : undefined}
                 size={320}
               />
               <div className="mt-4 flex items-center gap-4 text-xs">
@@ -764,19 +646,17 @@ export function QuizView({
                 </div>
                 <div className="flex items-center gap-1.5">
                   <span className="w-3 h-3 rounded-full border-2 border-dashed border-slate-400" />
-                  <span className="text-slate-500">Self-Reported Baseline</span>
+                  <span className="text-slate-500">{hasSelfAssessment ? "Self-Reported Baseline" : "Self-report not assessed"}</span>
                 </div>
               </div>
             </div>
 
-            {/* Right: Domain Difficulty-Weighted Cards */}
             <div className="lg:col-span-7 grid grid-cols-1 sm:grid-cols-2 gap-4">
               {(['programming', 'analytical', 'communication', 'design'] as DomainKey[]).map((dom) => {
                 const config = DOMAINS[dom];
                 const quizScore = currentAttempt.domainScores[dom];
                 const breakdown = currentAttempt.domainBreakdowns[dom];
                 const IconComp = domainIcons[dom];
-
                 return (
                   <div
                     key={dom}
@@ -794,7 +674,6 @@ export function QuizView({
                       </div>
                       <IconComp className="w-4 h-4 text-slate-400" />
                     </div>
-
                     <div className="flex items-baseline justify-between">
                       <div className="text-3xl font-extrabold font-mono text-[#17333b] dark:text-white">
                         {quizScore}
@@ -804,8 +683,6 @@ export function QuizView({
                         {breakdown.correctCount} of {breakdown.totalCount} correct
                       </span>
                     </div>
-
-                    {/* Progress bar */}
                     <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                       <div
                         className="h-full rounded-full transition-all duration-500"
@@ -815,7 +692,6 @@ export function QuizView({
                         }}
                       />
                     </div>
-
                     <span className="text-[11px] text-slate-500 block leading-tight">
                       Earned {breakdown.earnedPoints} of {breakdown.maxPoints} difficulty-weighted points.
                     </span>
@@ -825,7 +701,6 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Calibrated Combined Score Table (0.6x self + 0.4x quiz) */}
           <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
               <div>
@@ -837,12 +712,12 @@ export function QuizView({
                 </h2>
               </div>
               <span className="text-xs font-mono text-slate-500 bg-slate-100 dark:bg-slate-800 px-2.5 py-1 rounded-md">
-                Combined = 0.6 * Self + 0.4 * Quiz
+                {hasSelfAssessment ? "Combined = 0.6 * Self + 0.4 * Quiz" : "Score = measured quiz (100%)"}
               </span>
             </div>
 
             <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
-              To avoid penalizing students with temporary exam anxiety while mitigating subjective self-report bias, SkillPath AI blends both inputs deterministically: 60% self-reported practice habits + 40% measured screening performance.
+              When both inputs exist, the score combines 60% self-report and 40% measured screening. Without a self-assessment, only the measured quiz is used. These are exploratory scores, not validated aptitude predictions.
             </p>
 
             <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
@@ -850,8 +725,8 @@ export function QuizView({
                 <thead className="bg-slate-50 dark:bg-slate-900 font-semibold text-slate-700 dark:text-slate-300">
                   <tr>
                     <th className="px-4 py-3 text-left font-mono uppercase tracking-wider">Domain</th>
-                    <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">Self-Reported ({Math.round(SELF_REPORTED_WEIGHT * 100)}%)</th>
-                    <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">Measured Quiz ({Math.round(QUIZ_WEIGHT * 100)}%)</th>
+                    <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">Self-Reported ({hasSelfAssessment ? 60 : 0}%)</th>
+                    <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">Measured Quiz ({hasSelfAssessment ? 40 : 100}%)</th>
                     <th className="px-4 py-3 text-center font-mono uppercase tracking-wider bg-[#276459]/5 dark:bg-[#d7f78c]/10 text-[#1b4e45] dark:text-[#d7f78c] font-bold">
                       Calibrated Combined
                     </th>
@@ -863,8 +738,7 @@ export function QuizView({
                     const selfScore = selfReportedScores[dom];
                     const qScore = currentAttempt.domainScores[dom];
                     const comb = combinedScores[dom];
-                    const delta = comb - selfScore;
-
+                    const delta = hasSelfAssessment ? comb - selfScore : 0;
                     return (
                       <tr key={dom} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                         <td className="px-4 py-3 font-sans font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -875,7 +749,7 @@ export function QuizView({
                           {DOMAINS[dom].name}
                         </td>
                         <td className="px-4 py-3 text-center text-slate-700 dark:text-slate-300">
-                          {selfScore} pts
+                          {hasSelfAssessment ? `${selfScore} pts` : "Not assessed"}
                         </td>
                         <td className="px-4 py-3 text-center text-slate-700 dark:text-slate-300">
                           {qScore} pts
@@ -902,7 +776,6 @@ export function QuizView({
             </div>
           </div>
 
-          {/* Updated Top Career Fits Highlight */}
           <div className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-[#17333b] to-[#20444f] text-white dark:from-[#132c33] dark:to-[#0f2228] border border-[#276459]/40 shadow-xl space-y-6">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
               <div>
@@ -928,7 +801,6 @@ export function QuizView({
               </div>
             </div>
 
-            {/* Quick compare of top 3 */}
             <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 pt-4 border-t border-white/10 text-xs">
               {updatedCareerFits.slice(0, 3).map((fit, idx) => (
                 <div key={fit.career.id} className="p-3 rounded-xl bg-white/5 border border-white/10">
@@ -957,89 +829,9 @@ export function QuizView({
               </button>
             </div>
           </div>
-
-          {/* Attempt History Section */}
-          <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-5">
-            <div className="flex items-center justify-between">
-              <div>
-                <span className="text-xs font-mono font-bold uppercase tracking-wider text-slate-500">
-                  Historical Records
-                </span>
-                <h3 className="text-lg font-bold text-slate-900 dark:text-white font-display mt-0.5">
-                  Aptitude Screening History ({quizAttempts.length} Attempts)
-                </h3>
-              </div>
-              {quizAttempts.length > 1 && (
-                <button
-                  onClick={onClearQuizAttempts}
-                  className="min-h-[44px] text-xs font-semibold text-rose-600 dark:text-rose-400 hover:underline px-2"
-                >
-                  Clear History
-                </button>
-              )}
-            </div>
-
-            {/* Sparkline / Trend visualization */}
-            {quizAttempts.length > 1 && (
-              <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200 dark:border-slate-800">
-                <span className="text-[11px] font-mono font-bold text-slate-500 uppercase tracking-wider block mb-2">
-                  Performance Progression Over Time (Score / 100)
-                </span>
-                <div className="flex items-end gap-2 h-24 pt-2">
-                  {quizAttempts.map((att, i) => (
-                    <div key={att.id} className="flex-1 flex flex-col items-center gap-1 group relative">
-                      <div
-                        className="w-full rounded-t-md bg-[#276459] dark:bg-[#d7f78c] transition-all hover:opacity-80"
-                        style={{ height: `${Math.max(12, (att.overallScore / 100) * 80)}px` }}
-                      />
-                      <span className="text-[10px] font-mono text-slate-500">#{i + 1}</span>
-                      <div className="hidden group-hover:block absolute -top-8 bg-slate-900 text-white text-[10px] px-2 py-0.5 rounded shadow z-10 whitespace-nowrap">
-                        {att.overallScore} pts ({att.dateLabel})
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            )}
-
-            {/* History Table */}
-            <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
-              <table className="min-w-full divide-y divide-slate-200 dark:divide-slate-800 text-xs font-mono">
-                <thead className="bg-slate-50 dark:bg-slate-900 text-slate-600 dark:text-slate-400">
-                  <tr>
-                    <th className="px-4 py-2.5 text-left font-sans font-bold">Attempt</th>
-                    <th className="px-4 py-2.5 text-left">Date</th>
-                    <th className="px-4 py-2.5 text-center">Mode</th>
-                    <th className="px-4 py-2.5 text-center">Overall</th>
-                    <th className="px-4 py-2.5 text-center">Prog</th>
-                    <th className="px-4 py-2.5 text-center">Anal</th>
-                    <th className="px-4 py-2.5 text-center">Comm</th>
-                    <th className="px-4 py-2.5 text-center">Design</th>
-                  </tr>
-                </thead>
-                <tbody className="divide-y divide-slate-100 dark:divide-slate-800 text-slate-700 dark:text-slate-300">
-                  {quizAttempts.map((att, idx) => (
-                    <tr key={att.id} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
-                      <td className="px-4 py-2.5 font-bold font-sans">#{idx + 1}</td>
-                      <td className="px-4 py-2.5 text-slate-500">{att.dateLabel}</td>
-                      <td className="px-4 py-2.5 text-center uppercase text-[10px]">{att.mode}</td>
-                      <td className="px-4 py-2.5 text-center font-bold text-[#1b4e45] dark:text-[#d7f78c]">{att.overallScore}</td>
-                      <td className="px-4 py-2.5 text-center">{att.domainScores.programming}</td>
-                      <td className="px-4 py-2.5 text-center">{att.domainScores.analytical}</td>
-                      <td className="px-4 py-2.5 text-center">{att.domainScores.communication}</td>
-                      <td className="px-4 py-2.5 text-center">{att.domainScores.design}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          </div>
         </div>
       )}
 
-      {/* ======================================================== */}
-      {/* 4. HISTORY VIEW                                          */}
-      {/* ======================================================== */}
       {viewState === 'history' && (
         <div className="space-y-6">
           <div className="flex items-center justify-between p-6 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">

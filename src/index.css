@@ -73,9 +73,11 @@
     transition-duration: 0.01ms !important;
     scroll-behavior: auto !important;
   }
+
   .brand-gradient-panel {
     animation: none !important;
   }
+
   .mint-glow-animated {
     animation: none !important;
   }
@@ -86,16 +88,20 @@
   width: 6px;
   height: 6px;
 }
+
 ::-webkit-scrollbar-track {
   background: transparent;
 }
+
 ::-webkit-scrollbar-thumb {
   background: rgba(39, 100, 89, 0.2);
   border-radius: 9999px;
 }
+
 .dark ::-webkit-scrollbar-thumb {
   background: rgba(215, 247, 140, 0.2);
 }
+
 ::-webkit-scrollbar-thumb:hover {
   background: rgba(39, 100, 89, 0.4);
 }
@@ -106,9 +112,11 @@
     background: white !important;
     color: black !important;
   }
+
   .no-print {
     display: none !important;
   }
+
   .print-only {
     display: block !important;
   }

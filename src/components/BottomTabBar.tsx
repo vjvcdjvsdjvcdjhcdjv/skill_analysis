@@ -2,7 +2,6 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Mobile Bottom Tab Bar for screens under 760px.
- * Guarantees minimum 44px tap targets and complies with the 15% mobile sticky cap.
  */
 
 import React from 'react';

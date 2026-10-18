@@ -2,13 +2,10 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Optional Feedback & Evidence Collection Card
- * Placed after Aptitude Quiz results and on Dashboard.
- * Collects anonymous clarity, self-match ratings, and expected career.
- * Records completion durations and device type without student name or email.
  */
 
 import React, { useState } from 'react';
-import { StarIcon, CheckCircleIcon, RefreshCwIcon, MessageSquareIcon } from './icons.tsx';
+import { CheckCircleIcon, RefreshCwIcon, MessageSquareIcon } from './icons.tsx';
 import { submitFeedback, FeedbackSubmission } from '../services/supabase.ts';
 
 interface FeedbackCardProps {
@@ -22,7 +19,8 @@ const LOCAL_STORAGE_FEEDBACK_KEY = 'skillpath_device_feedback';
 export function getLocalDeviceFeedbackList(): FeedbackSubmission[] {
   try {
     const raw = localStorage.getItem(LOCAL_STORAGE_FEEDBACK_KEY);
-    return raw ? JSON.parse(raw) : [];
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed.slice(-200) : [];
   } catch {
     return [];
   }
@@ -66,16 +64,14 @@ export function FeedbackCard({
       timestamp: new Date().toISOString(),
     };
 
-    // Cache locally on device first (for #evidence page calculation)
     saveLocalDeviceFeedback(submission);
 
     try {
       await submitFeedback(submission);
       setIsSubmitted(true);
     } catch (err) {
-      // Even if cloud Supabase errors (e.g. offline or unauthenticated), local copy is secured
       console.warn('Feedback cloud submission caught:', err);
-      setIsSubmitted(true);
+      setErrorMessage('Cloud submission failed. A copy is stored on this device; please retry when online.');
     } finally {
       setIsSubmitting(false);
     }

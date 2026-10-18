@@ -2,21 +2,15 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Evidence & Calibration View (#evidence)
- * Displays diagnostic feedback metrics, average ratings, completion times,
- * domain gap analysis (self-reported vs measured), and honest research limitations.
- * Strictly adheres to rule: NEVER invent or prefill numbers. If N is 0, shows "No data yet".
  */
 
 import React, { useState, useEffect } from 'react';
 import { PageId } from '../components/TopBar.tsx';
 import {
   BarChartIcon,
-  CheckCircleIcon,
   AlertTriangleIcon,
   ClockIcon,
   ShieldIcon,
-  TargetIcon,
-  ArrowRightIcon,
   ZapIcon,
 } from '../components/icons.tsx';
 import { DomainKey, DOMAINS } from '../utils/scoring.ts';
@@ -39,26 +33,20 @@ export function EvidenceView({
   const [isCloudFeedbackPrivate, setIsCloudFeedbackPrivate] = useState<boolean>(true);
 
   useEffect(() => {
-    // Read cached on-device submissions
     const localData = getLocalDeviceFeedbackList();
     setFeedbackList(localData);
-    // Note: Supabase RLS purposefully prohibits client-side reads on feedback table
-    // to preserve zero-leakage student anonymity.
     setIsCloudFeedbackPrivate(true);
   }, []);
 
   const totalN = feedbackList.length;
 
-  // Compute averages only from real collected feedback
   const averageClarity = totalN > 0
     ? (feedbackList.reduce((acc, f) => acc + f.clarityRating, 0) / totalN).toFixed(1)
     : null;
-
   const averageSelfMatch = totalN > 0
     ? (feedbackList.reduce((acc, f) => acc + f.selfMatchRating, 0) / totalN).toFixed(1)
     : null;
 
-  // Filter valid durations
   const assessmentTimes = feedbackList
     .map((f) => f.timeToFinishAssessment)
     .filter((t): t is number => typeof t === 'number' && t > 0);
@@ -73,7 +61,6 @@ export function EvidenceView({
     ? Math.round(quizTimes.reduce((a, b) => a + b, 0) / quizTimes.length)
     : null;
 
-  // Career expectation breakdown
   const careerExpectations = feedbackList.reduce<Record<string, number>>((acc, f) => {
     acc[f.expectedCareer] = (acc[f.expectedCareer] || 0) + 1;
     return acc;
@@ -83,7 +70,6 @@ export function EvidenceView({
 
   return (
     <div className="space-y-8 animate-in fade-in duration-200 pb-12">
-      {/* Header */}
       <div className="border-b border-slate-200/80 dark:border-slate-800 pb-5">
         <div className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md bg-[#276459]/10 text-[#1b4e45] dark:bg-[#d7f78c]/15 dark:text-[#d7f78c] text-xs font-bold uppercase tracking-wider mb-2">
           <BarChartIcon className="w-3.5 h-3.5" />
@@ -98,7 +84,6 @@ export function EvidenceView({
         </p>
       </div>
 
-      {/* Cloud Security Disclaimer Banner */}
       {isCloudFeedbackPrivate && (
         <div className="p-4 rounded-2xl bg-amber-500/10 border border-amber-500/20 text-xs text-amber-900 dark:text-amber-200 flex items-start gap-3">
           <ShieldIcon className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
@@ -111,7 +96,6 @@ export function EvidenceView({
         </div>
       )}
 
-      {/* Section 1: Aggregate Feedback Metrics */}
       <div className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base sm:text-lg font-bold text-slate-900 dark:text-white">
@@ -145,7 +129,6 @@ export function EvidenceView({
           </div>
         ) : (
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4">
-            {/* Clarity */}
             <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Clarity Rating
@@ -161,7 +144,6 @@ export function EvidenceView({
               </p>
             </div>
 
-            {/* Self-Match */}
             <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Perception Match
@@ -177,7 +159,6 @@ export function EvidenceView({
               </p>
             </div>
 
-            {/* Avg Assessment Time */}
             <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Avg Assessment Time
@@ -192,7 +173,6 @@ export function EvidenceView({
               </p>
             </div>
 
-            {/* Avg Quiz Time */}
             <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
               <span className="text-[11px] font-bold uppercase tracking-wider text-slate-500 dark:text-slate-400">
                 Avg Quiz Time
@@ -210,7 +190,6 @@ export function EvidenceView({
         )}
       </div>
 
-      {/* Section 2: Self-Reported vs Measured Gap Table */}
       <div className="space-y-3">
         <div className="flex items-center justify-between">
           <div>
@@ -245,7 +224,6 @@ export function EvidenceView({
                 const quizScore = latestQuizAttempt ? latestQuizAttempt.domainScores[domain] : null;
                 const delta = quizScore !== null ? quizScore - selfScore : null;
                 let observation = 'Awaiting aptitude quiz screening attempt.';
-
                 if (delta !== null) {
                   if (delta >= 15) {
                     observation = 'Underestimated confidence: measured screening outperformed self-rating significantly.';
@@ -259,7 +237,6 @@ export function EvidenceView({
                     observation = 'Moderate negative delta: minor gap between subjective practice and objective reasoning.';
                   }
                 }
-
                 return (
                   <tr key={domain} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/30">
                     <td className="py-3.5 px-4 font-bold text-slate-900 dark:text-white">
@@ -316,7 +293,6 @@ export function EvidenceView({
         )}
       </div>
 
-      {/* Section 3: Expected Career Distribution if N > 0 */}
       {totalN > 0 && Object.keys(careerExpectations).length > 0 && (
         <div className="p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
           <h3 className="font-bold text-sm text-slate-900 dark:text-white">
@@ -344,7 +320,6 @@ export function EvidenceView({
         </div>
       )}
 
-      {/* Section 4: Honest Limitations Box */}
       <div className="p-6 rounded-3xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 space-y-3">
         <div className="flex items-center gap-2">
           <AlertTriangleIcon className="w-5 h-5 text-amber-600 dark:text-amber-400 shrink-0" />
@@ -355,7 +330,6 @@ export function EvidenceView({
         <p className="text-xs text-slate-600 dark:text-slate-400 leading-relaxed">
           SkillPath AI is engineered strictly as an educational coaching and exploratory guidance tool. It is not an accredited psychometric instrument or hiring certification.
         </p>
-
         <div className="grid grid-cols-1 md:grid-cols-2 gap-3 pt-2 text-xs text-slate-600 dark:text-slate-400">
           <div className="p-3 rounded-xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 space-y-1">
             <span className="font-bold text-slate-900 dark:text-white block">

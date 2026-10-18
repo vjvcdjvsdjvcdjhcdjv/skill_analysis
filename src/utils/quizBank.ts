@@ -443,12 +443,6 @@ export interface QuizAttempt {
   strongestDomain: DomainKey;
 }
 
-/**
- * Difficulty point weighting:
- * Level 1: 1.0 point
- * Level 2: 1.5 points
- * Level 3: 2.0 points
- */
 export const DIFFICULTY_WEIGHTS: Record<1 | 2 | 3, number> = {
   1: 1.0,
   2: 1.5,
@@ -478,7 +472,6 @@ export function generateQuizSession(mode: 'quick' | 'full'): QuizQuestion[] {
       const originalCorrectOption = q.options[q.correctIndex];
       const shuffledOptions = shuffleArray(q.options);
       const newCorrectIndex = shuffledOptions.indexOf(originalCorrectOption);
-
       selected.push({
         ...q,
         options: shuffledOptions,
@@ -558,7 +551,7 @@ export function calculateQuizResults(
   });
 
   return {
-    id: `attempt_${Date.now()}`,
+    id: `attempt_${crypto.randomUUID()}`,
     timestamp: Date.now(),
     dateLabel,
     mode,

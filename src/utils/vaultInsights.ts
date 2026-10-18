@@ -5,7 +5,6 @@
  * STUDY VAULT ACTIONABLE PLAN INSIGHTS & SUGGESTION ENGINE
  * ============================================================================
  * Transparent, deterministic rule-based suggestion generator for student study vaults.
- *
  * PRIVACY & COMPLIANCE NOTICE:
  * SkillPath AI does NOT inspect or read the contents of your uploaded files.
  * All suggestions are generated strictly from the assignment scores, due dates,
@@ -202,6 +201,7 @@ export function generateVaultSuggestions(
     const mostOverdue = overdueAssignments.sort(
       (a, b) => new Date(a.due_date!).getTime() - new Date(b.due_date!).getTime()
     )[0];
+
     suggestions.push({
       id: `sug_overdue_${mostOverdue.id}`,
       title: `Submit Overdue Work: "${mostOverdue.title}"`,

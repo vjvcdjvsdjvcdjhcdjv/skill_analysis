@@ -33,17 +33,19 @@ export function CountUp({
     let startTimestamp: number | null = null;
     const startValue = displayValue;
     const delta = value - startValue;
+
     if (delta === 0) return;
 
     let animationFrameId: number;
-
     const step = (timestamp: number) => {
       if (!startTimestamp) startTimestamp = timestamp;
       const elapsed = timestamp - startTimestamp;
       const progress = Math.min(elapsed / duration, 1);
+
       // Ease out cubic
       const easeOut = 1 - Math.pow(1 - progress, 3);
       const current = Math.round(startValue + delta * easeOut);
+
       setDisplayValue(current);
 
       if (progress < 1) {
@@ -54,7 +56,6 @@ export function CountUp({
     };
 
     animationFrameId = requestAnimationFrame(step);
-
     return () => {
       cancelAnimationFrame(animationFrameId);
     };

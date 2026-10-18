@@ -1,10 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Assessment View:
- * 8 self-report questions across Programming, Analytical thinking, Communication, and Design.
- * Features progress meter, interactive card selection, domain tags, and honest guidance.
- * Accessible with sequential h1 -> h2 hierarchy and minimum 44px tap targets.
+ * Assessment View
  */
 
 import React, { useState } from 'react';
@@ -12,15 +9,12 @@ import { PageId } from '../components/TopBar.tsx';
 import {
   ASSESSMENT_QUESTIONS,
   DOMAINS,
-  DomainKey,
-  AssessmentQuestion,
 } from '../utils/scoring.ts';
 import {
   CheckIcon,
   CheckCircleIcon,
   ArrowRightIcon,
   ArrowLeftIcon,
-  SparklesIcon,
   InfoIcon,
 } from '../components/icons.tsx';
 
@@ -42,7 +36,6 @@ export function AssessmentView({
   onLoadSample,
 }: AssessmentViewProps) {
   const [currentStepIndex, setCurrentStepIndex] = useState(0);
-
   const totalQuestions = ASSESSMENT_QUESTIONS.length;
   const answeredCount = Object.keys(answers).length;
   const progressPercent = Math.round((answeredCount / totalQuestions) * 100);
@@ -68,8 +61,6 @@ export function AssessmentView({
 
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-16">
-      
-      {/* Top Heading */}
       <div className="space-y-1">
         <div className="text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
           Student Competency Evaluation
@@ -82,10 +73,7 @@ export function AssessmentView({
         </p>
       </div>
 
-      {/* Header & Progress Indicator */}
       <div className="space-y-4">
-        
-        {/* Honest tone disclaimer banner */}
         <div className="p-3.5 rounded-xl bg-slate-100 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800 flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2 text-slate-700 dark:text-slate-300">
             <InfoIcon className="w-4 h-4 text-[#1b4e45] dark:text-[#d7f78c] shrink-0" />
@@ -110,7 +98,6 @@ export function AssessmentView({
           </div>
         </div>
 
-        {/* Progress bar */}
         <div className="space-y-1.5">
           <div className="flex items-center justify-between text-xs font-semibold text-slate-700 dark:text-slate-300">
             <span>
@@ -135,12 +122,10 @@ export function AssessmentView({
           </div>
         </div>
 
-        {/* Question selector tabs */}
         <div className="flex items-center justify-between gap-1.5 overflow-x-auto py-1">
           {ASSESSMENT_QUESTIONS.map((q, idx) => {
             const isAnswered = answers[q.id] !== undefined;
             const isCurrent = idx === currentStepIndex;
-
             return (
               <button
                 key={q.id}
@@ -161,10 +146,7 @@ export function AssessmentView({
         </div>
       </div>
 
-      {/* Main Question Card */}
       <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-6">
-        
-        {/* Domain & Metric Header */}
         <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800/80 pb-4">
           <div className="flex items-center gap-2">
             <span
@@ -180,7 +162,6 @@ export function AssessmentView({
           </span>
         </div>
 
-        {/* Question Prompt as H2 */}
         <div className="space-y-2">
           <h2 className="text-xl sm:text-2xl font-bold text-[#17333b] dark:text-white font-display leading-snug">
             {currentQuestion.prompt}
@@ -190,21 +171,21 @@ export function AssessmentView({
           </p>
         </div>
 
-        {/* Options Radio List */}
         <div className="space-y-3 pt-2">
           {currentQuestion.options.map((opt) => {
             const isSelected = selectedValue === opt.value;
             return (
-              <div
+              <button
+                type="button"
+                aria-pressed={isSelected}
                 key={opt.value}
                 onClick={() => onAnswerChange(currentQuestion.id, opt.value)}
-                className={`p-4 min-h-[44px] rounded-xl border transition-all duration-200 cursor-pointer flex items-start gap-3.5 group hover:-translate-y-0.5 ${
+                className={`w-full text-left p-4 min-h-[44px] rounded-xl border transition-all duration-200 cursor-pointer flex items-start gap-3.5 group hover:-translate-y-0.5 ${
                   isSelected
                     ? 'border-[#1b4e45] bg-[#276459]/10 dark:border-[#d7f78c] dark:bg-[#d7f78c]/15 shadow-xs'
                     : 'border-slate-200 dark:border-slate-800 bg-slate-50/50 dark:bg-slate-900/30 hover:border-slate-300 dark:hover:border-slate-700'
                 }`}
               >
-                {/* Radio indicator */}
                 <div
                   className={`w-5 h-5 rounded-full mt-0.5 border flex items-center justify-center shrink-0 transition-colors ${
                     isSelected
@@ -214,7 +195,6 @@ export function AssessmentView({
                 >
                   {isSelected && <div className="w-2 h-2 rounded-full bg-white dark:bg-[#17333b]" />}
                 </div>
-
                 <div className="flex-1">
                   <div className="flex items-center justify-between">
                     <span className="text-sm font-bold text-slate-900 dark:text-white">
@@ -228,12 +208,11 @@ export function AssessmentView({
                     {opt.description}
                   </p>
                 </div>
-              </div>
+              </button>
             );
           })}
         </div>
 
-        {/* Bottom Navigation Buttons */}
         <div className="flex items-center justify-between pt-6 border-t border-slate-100 dark:border-slate-800/80">
           <button
             onClick={handlePrev}
@@ -247,7 +226,6 @@ export function AssessmentView({
             <ArrowLeftIcon className="w-3.5 h-3.5" />
             Previous
           </button>
-
           <button
             onClick={handleNext}
             disabled={selectedValue === undefined}
@@ -265,7 +243,6 @@ export function AssessmentView({
         </div>
       </div>
 
-      {/* Completion Banner if all 8 answered */}
       {answeredCount === totalQuestions && (
         <div className="p-4 rounded-2xl bg-[#eaf4ed] dark:bg-[#132c33] border border-[#276459]/30 flex flex-col sm:flex-row items-center justify-between gap-3 text-xs">
           <div className="flex items-center gap-2.5 text-[#1b4e45] dark:text-[#d7f78c]">

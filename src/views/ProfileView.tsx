@@ -1,10 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Student Profile View:
- * Academic identity, optional domain course marks (0-100), and skill self-ratings.
- * Demonstrates the 0.20 weighting and transparent rescaling mechanics.
- * Accessible with 44px tap targets and AA contrast.
+ * Student Profile View
  */
 
 import React from 'react';
@@ -17,8 +14,6 @@ import {
 import {
   UserIcon,
   SparklesIcon,
-  CheckCircleIcon,
-  InfoIcon,
   ArrowRightIcon,
   RefreshCwIcon,
 } from '../components/icons.tsx';
@@ -47,8 +42,6 @@ export function ProfileView({
   setYear,
   focus,
   setFocus,
-  statement,
-  setStatement,
   domainMetrics,
   onUpdateDomainMetric,
   onLoadDemo,
@@ -60,8 +53,6 @@ export function ProfileView({
 
   return (
     <div className="max-w-3xl mx-auto space-y-8 pb-16">
-      
-      {/* Header */}
       <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-4">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -102,7 +93,6 @@ export function ProfileView({
           </div>
         </div>
 
-        {/* Basic Student Information Form */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4 pt-3 border-t border-slate-100 dark:border-slate-800">
           <div>
             <label className="block text-xs font-bold text-slate-800 dark:text-slate-200 uppercase tracking-wider mb-1">
@@ -143,7 +133,6 @@ export function ProfileView({
         </div>
       </div>
 
-      {/* Academic Course Marks Section */}
       <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
@@ -160,9 +149,8 @@ export function ProfileView({
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
           {domainKeys.map((key) => {
             const domain = DOMAINS[key];
-            const metrics = domainMetrics[key];
+            const metrics = domainMetrics?.[key] || { marks: null, confidence: 50, practice: 50, skill: 50 };
             const hasMarks = metrics.marks !== null && metrics.marks !== undefined;
-
             return (
               <div
                 key={key}
@@ -218,7 +206,6 @@ export function ProfileView({
           })}
         </div>
 
-        {/* Action Button */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between">
           <button
             onClick={() => onNavigate('assessment')}

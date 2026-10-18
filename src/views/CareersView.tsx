@@ -1,31 +1,25 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Careers View:
- * Comprehensive exploration of all 5 tech career pathways,
- * comparative domain weights, competencies, starter capstones,
- * and direct routing into the 30-day action plan.
+ * Careers View
  */
 
 import React, { useState } from 'react';
 import { PageId } from '../components/TopBar.tsx';
 import {
   CareerFitResult,
-  CareerProfile,
   DomainKey,
   DOMAINS,
 } from '../utils/scoring.ts';
 import {
   BriefcaseIcon,
   SparklesIcon,
-  ArrowRightIcon,
   CalendarIcon,
-  CheckCircleIcon,
-  InfoIcon,
 } from '../components/icons.tsx';
 import { CountUp } from '../components/CountUp.tsx';
 
 interface CareersViewProps {
+  hasAssessment: boolean;
   careerFits: CareerFitResult[];
   selectedCareerId: string;
   onSelectCareerForPlan: (careerId: string) => void;
@@ -33,6 +27,7 @@ interface CareersViewProps {
 }
 
 export function CareersView({
+  hasAssessment,
   careerFits,
   selectedCareerId,
   onSelectCareerForPlan,
@@ -53,8 +48,6 @@ export function CareersView({
 
   return (
     <div className="space-y-10 pb-16">
-      
-      {/* Header */}
       <div className="flex flex-col sm:flex-row sm:items-end justify-between gap-4 p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
         <div>
           <div className="text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
@@ -64,11 +57,10 @@ export function CareersView({
             5 High-Impact Tech Career Pathways
           </h1>
           <p className="text-xs sm:text-sm text-slate-600 dark:text-slate-300 mt-1 max-w-2xl">
-            Ranked by weighted alignment with your 4 domain scores. Every pathway includes actionable entry-level competencies and starter capstones.
+            {hasAssessment ? "Ranked by weighted alignment with your 4 domain scores." : "Explore careers. Complete an assessment to see personal matches."} Every pathway includes actionable entry-level competencies and starter capstones.
           </p>
         </div>
 
-        {/* Filter buttons */}
         <div className="flex items-center gap-1.5 p-1 bg-slate-100 dark:bg-slate-900 rounded-xl overflow-x-auto">
           <button
             onClick={() => setFilterDomain('all')}
@@ -123,13 +115,12 @@ export function CareersView({
         </div>
       </div>
 
-      {/* Career Cards List */}
       <div className="space-y-6">
         {filteredCareers.map((fit, idx) => {
           const career = fit.career;
           const isSelected = selectedCareerId === career.id;
           const isExpanded = expandedId === career.id;
-          const isTopRank = idx === 0;
+          const isTopRank = hasAssessment && idx === 0;
 
           return (
             <div
@@ -141,12 +132,10 @@ export function CareersView({
               }`}
             >
               <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-6">
-                
-                {/* Career Title & Summary */}
                 <div className="space-y-2 flex-1">
                   <div className="flex flex-wrap items-center gap-2">
                     <span className="font-mono text-xs font-bold text-slate-600 dark:text-slate-400">
-                      Rank #{idx + 1}
+                      {hasAssessment ? `Rank #${idx + 1}` : 'Explore pathway'}
                     </span>
                     {isTopRank && (
                       <span className="inline-flex items-center gap-1 text-[11px] font-bold px-2 py-0.5 rounded-md bg-[#d7f78c]/30 text-[#17333b] dark:bg-[#d7f78c]/20 dark:text-[#d7f78c]">
@@ -168,14 +157,13 @@ export function CareersView({
                   </p>
                 </div>
 
-                {/* Score & Plan Button */}
                 <div className="flex items-center gap-4 shrink-0">
                   <div className="text-right">
                     <span className="text-[11px] uppercase tracking-wider text-slate-600 dark:text-slate-400 font-semibold block">
                       Competency Match
                     </span>
                     <div className="text-3xl sm:text-4xl font-extrabold font-mono text-[#1b4e45] dark:text-[#d7f78c]">
-                      <CountUp value={fit.fitPercentage} suffix="%" />
+                      {hasAssessment ? <CountUp value={fit.fitPercentage} suffix="%" /> : <span className="text-sm">Not assessed</span>}
                     </div>
                   </div>
                   <button
@@ -188,7 +176,6 @@ export function CareersView({
                 </div>
               </div>
 
-              {/* Rationale strip */}
               <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-4 pt-5 mt-5 border-t border-slate-100 dark:border-slate-800 text-xs">
                 <div>
                   <span className="text-slate-600 dark:text-slate-400 font-semibold uppercase tracking-wider text-[10px] block mb-0.5">
@@ -216,7 +203,6 @@ export function CareersView({
                 </div>
               </div>
 
-              {/* Domain Weight Matrix */}
               <div className="pt-4 mt-4 border-t border-slate-100 dark:border-slate-800 flex flex-wrap items-center justify-between gap-3 text-xs">
                 <div className="flex flex-wrap items-center gap-3">
                   <span className="text-slate-600 dark:text-slate-400 font-medium text-[11px]">Formula Weights:</span>
@@ -227,7 +213,6 @@ export function CareersView({
                     </span>
                   ))}
                 </div>
-
                 <button
                   onClick={() => setExpandedId(isExpanded ? '' : career.id)}
                   className="min-h-[44px] flex items-center text-xs font-semibold text-[#1b4e45] dark:text-[#d7f78c] hover:underline"
@@ -236,7 +221,6 @@ export function CareersView({
                 </button>
               </div>
 
-              {/* Expanded details */}
               {isExpanded && (
                 <div className="mt-5 pt-5 border-t border-slate-200 dark:border-slate-700/80 grid grid-cols-1 md:grid-cols-2 gap-5 animate-in fade-in duration-200">
                   <div className="space-y-2">
@@ -257,7 +241,6 @@ export function CareersView({
                       {career.growthPerspective}
                     </p>
                   </div>
-
                   <div className="p-4 rounded-xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800/80 space-y-2">
                     <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
                       <BriefcaseIcon className="w-4 h-4" />

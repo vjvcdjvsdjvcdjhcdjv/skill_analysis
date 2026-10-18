@@ -28,10 +28,10 @@ export const QUIZ_WEIGHT = 0.4;
  * Backward compatible: if quizScore is not provided (null/undefined), returns existing score untouched.
  */
 export function calculateCombinedScore(existingScore: number, quizScore?: number | null): number {
-  if (quizScore === null || quizScore === undefined || Number.isNaN(quizScore)) {
-    return existingScore;
-  }
-  return Math.round(SELF_REPORTED_WEIGHT * existingScore + QUIZ_WEIGHT * quizScore);
+  const clamp=(n:number)=>Number.isFinite(n)?Math.max(0,Math.min(100,n)):0;
+  const baseline=clamp(existingScore);
+  if (quizScore == null || !Number.isFinite(quizScore)) return baseline;
+  return Math.round(SELF_REPORTED_WEIGHT * baseline + QUIZ_WEIGHT * clamp(quizScore));
 }
 
 export interface DomainMetrics {
@@ -100,18 +100,65 @@ export const DOMAINS: Record<DomainKey, DomainConfig> = {
   },
 };
 
+export const DEFAULT_DOMAIN_METRICS: Record<DomainKey, DomainMetrics> = {
+  programming: { marks: null, confidence: 50, practice: 50, skill: 50 },
+  analytical: { marks: null, confidence: 50, practice: 50, skill: 50 },
+  communication: { marks: null, confidence: 50, practice: 50, skill: 50 },
+  design: { marks: null, confidence: 50, practice: 50, skill: 50 },
+};
+
+export function sanitizeDomainMetrics(
+  raw?: Partial<Record<DomainKey, Partial<DomainMetrics>>> | null
+): Record<DomainKey, DomainMetrics> {
+  const result: Record<DomainKey, DomainMetrics> = {
+    programming: { ...DEFAULT_DOMAIN_METRICS.programming },
+    analytical: { ...DEFAULT_DOMAIN_METRICS.analytical },
+    communication: { ...DEFAULT_DOMAIN_METRICS.communication },
+    design: { ...DEFAULT_DOMAIN_METRICS.design },
+  };
+
+  if (!raw || typeof raw !== 'object') {
+    return result;
+  }
+
+  const keys: DomainKey[] = ['programming', 'analytical', 'communication', 'design'];
+  for (const key of keys) {
+    const item = raw[key];
+    if (item && typeof item === 'object') {
+      result[key] = {
+        marks: typeof item.marks === 'number' && Number.isFinite(item.marks)
+          ? Math.max(0, Math.min(100, Number(item.marks)))
+          : null,
+        confidence: typeof item.confidence === 'number' && Number.isFinite(item.confidence)
+          ? Math.max(0, Math.min(100, item.confidence))
+          : 50,
+        practice: typeof item.practice === 'number' && Number.isFinite(item.practice)
+          ? Math.max(0, Math.min(100, item.practice))
+          : 50,
+        skill: typeof item.skill === 'number' && Number.isFinite(item.skill)
+          ? Math.max(0, Math.min(100, item.skill))
+          : 50,
+      };
+    }
+  }
+
+  return result;
+}
+
 /**
  * Computes a single domain score from 4 metrics using deterministic weights.
  * Handles missing marks by rescaling remaining factors cleanly.
  */
-export function calculateDomainScore(metrics: DomainMetrics): DomainScoreResult {
-  const hasMarks = metrics.marks !== null && metrics.marks !== undefined && !Number.isNaN(metrics.marks);
+export function calculateDomainScore(metrics?: DomainMetrics | null): DomainScoreResult {
+  const safeMetrics = sanitizeDomainMetrics({programming:metrics || {}}).programming;
+
+  const hasMarks = safeMetrics.marks !== null;
 
   if (hasMarks) {
-    const marksVal = Math.max(0, Math.min(100, metrics.marks as number));
-    const confVal = Math.max(0, Math.min(100, metrics.confidence));
-    const pracVal = Math.max(0, Math.min(100, metrics.practice));
-    const skillVal = Math.max(0, Math.min(100, metrics.skill));
+    const marksVal = Math.max(0, Math.min(100, safeMetrics.marks as number));
+    const confVal = Math.max(0, Math.min(100, safeMetrics.confidence));
+    const pracVal = Math.max(0, Math.min(100, safeMetrics.practice));
+    const skillVal = Math.max(0, Math.min(100, safeMetrics.skill));
 
     const marksContrib = 0.20 * marksVal;
     const confContrib = 0.30 * confVal;
@@ -136,9 +183,9 @@ export function calculateDomainScore(metrics: DomainMetrics): DomainScoreResult 
     };
   } else {
     // Missing marks: exclude and rescale over remaining 0.80 weight
-    const confVal = Math.max(0, Math.min(100, metrics.confidence));
-    const pracVal = Math.max(0, Math.min(100, metrics.practice));
-    const skillVal = Math.max(0, Math.min(100, metrics.skill));
+    const confVal = Math.max(0, Math.min(100, safeMetrics.confidence));
+    const pracVal = Math.max(0, Math.min(100, safeMetrics.practice));
+    const skillVal = Math.max(0, Math.min(100, safeMetrics.skill));
 
     const wConf = Math.round((0.30 / 0.80) * 10000) / 10000; // 0.375
     const wPrac = Math.round((0.40 / 0.80) * 10000) / 10000; // 0.500
@@ -278,7 +325,6 @@ export function calculateCareerFit(
     (Object.keys(career.weights) as DomainKey[]).forEach((d) => {
       fit += (domainScores[d] || 0) * career.weights[d];
     });
-
     const roundedFit = Math.round(fit);
 
     // Identify student's relative strength and area for this career

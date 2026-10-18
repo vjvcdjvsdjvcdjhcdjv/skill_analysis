@@ -7,13 +7,16 @@
  * Connects our student app to Supabase for:
  * 1. User Authentication (Signup, Login, Logout, Forgot Password)
  * 2. Database Storage (Profiles, Answers, Career Choices, Quiz Attempts)
- *
- * Configured with live Supabase credentials.
+ * 3. Study Vault Storage & Metadata:
+ *    - Bucket: "vault"
+ *    - Table: "vault_items"
  * ============================================================================
  */
 
+import publicConfig from '../config/supabase.public.json';
+import { consumeAuthAttempt, resetAuthAttempts } from '../utils/authGuard.ts';
 import { createClient, type User as SupabaseAuthUser } from '@supabase/supabase-js';
-import type { DomainKey, DomainMetrics, AssessmentSnapshot } from '../utils/scoring.ts';
+import { type DomainKey, type DomainMetrics, type AssessmentSnapshot, sanitizeDomainMetrics } from '../utils/scoring.ts';
 import type { QuizAttempt } from '../utils/quizBank.ts';
 
 const env: Record<string, string | undefined> =
@@ -24,12 +27,12 @@ const env: Record<string, string | undefined> =
     : {};
 
 export const SUPABASE_URL: string =
-  env.VITE_SUPABASE_URL || 'https://yxyxpovlnbzyvhakfpoe.supabase.co';
+  env.VITE_SUPABASE_URL || publicConfig.url;
 
 export const SUPABASE_PUBLISHABLE_KEY: string =
   env.VITE_SUPABASE_PUBLISHABLE_KEY ||
   env.VITE_SUPABASE_ANON_KEY ||
-  'sb_publishable_e-xx9bhB50IZVfV17tsD2g__GEsWucX';
+  publicConfig.publishableKey;
 
 export const SUPABASE_ANON_KEY: string = SUPABASE_PUBLISHABLE_KEY;
 
@@ -42,17 +45,18 @@ export function isSupabaseConfigured(): boolean {
     SUPABASE_URL !== 'PASTE_URL' &&
     (SUPABASE_URL.startsWith('http://') || SUPABASE_URL.startsWith('https://')) &&
     Boolean(SUPABASE_PUBLISHABLE_KEY) &&
-    SUPABASE_PUBLISHABLE_KEY !== 'PASTE_KEY'
+    SUPABASE_PUBLISHABLE_KEY !== 'PASTE_KEY' &&
+    !SUPABASE_PUBLISHABLE_KEY.startsWith('sb_secret_')
   );
 }
 
 // Initialize the Supabase Client with configured credentials
-export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
+export const supabase = createClient(SUPABASE_URL || 'http://127.0.0.1:9', SUPABASE_PUBLISHABLE_KEY || 'unconfigured', {
   auth: {
-    persistSession: true,
-    autoRefreshToken: true,
-    detectSessionInUrl: true,
-    storage: typeof window !== 'undefined' ? window.localStorage : undefined,
+    persistSession: isSupabaseConfigured(),
+    autoRefreshToken: isSupabaseConfigured(),
+    detectSessionInUrl: isSupabaseConfigured(),
+
   },
 });
 
@@ -60,10 +64,6 @@ export const supabase = createClient(SUPABASE_URL, SUPABASE_PUBLISHABLE_KEY, {
 // 2. USER TYPES & SESSION MAPPING
 // ---------------------------------------------------------------------------
 
-/**
- * Unified user interface representing the currently signed-in student.
- * Provides both `.uid` and `.id` for 100% compatibility with all UI views.
- */
 export interface AppUser {
   uid: string;
   id: string;
@@ -72,12 +72,8 @@ export interface AppUser {
   photoURL?: string | null;
 }
 
-// Alias for backwards compatibility with existing UI components
 export type FirebaseUser = AppUser;
 
-/**
- * Converts a Supabase Auth User object into the application's AppUser format.
- */
 export function mapSupabaseUser(user: SupabaseAuthUser | null): AppUser | null {
   if (!user) return null;
   return {
@@ -94,18 +90,15 @@ export function mapSupabaseUser(user: SupabaseAuthUser | null): AppUser | null {
 }
 
 // ---------------------------------------------------------------------------
-// 3. PENDING SIGNUP NAME (Prevents race conditions during account creation)
+// 3. PENDING SIGNUP NAME
 // ---------------------------------------------------------------------------
 let pendingSignupName: string | null = null;
-
 export function getPendingSignupName(): string | null {
   return pendingSignupName;
 }
-
 export function setPendingSignupName(name: string | null): void {
   pendingSignupName = name;
 }
-
 export function clearPendingSignupName(): void {
   pendingSignupName = null;
 }
@@ -113,6 +106,7 @@ export function clearPendingSignupName(): void {
 // ---------------------------------------------------------------------------
 // 4. USER CLOUD DATA STRUCTURE (Profiles & Quiz Attempts)
 // ---------------------------------------------------------------------------
+
 export interface UserCloudData {
   id: string;
   email?: string | null;
@@ -136,29 +130,29 @@ export interface UserCloudData {
 // 5. AUTHENTICATION FUNCTIONS
 // ---------------------------------------------------------------------------
 
-/**
- * Sign up a new student using email and password.
- * Saves their display name in Supabase user metadata and seeds their initial profile.
- */
 export async function signUpWithEmail(
   email: string,
   pass: string,
-  displayName: string
-): Promise<AppUser> {
+  displayName: string,
+  captchaToken?: string
+): Promise<AppUser | null> {
   const cleanEmail = email.trim();
   const cleanName = displayName.trim();
-  setPendingSignupName(cleanName);
 
   if (!isSupabaseConfigured()) {
     throw new Error(
-      'Supabase is not configured yet! Please open src/services/supabase.ts and paste your Project URL and Publishable Key.'
+      'Account services are not configured. Use guest mode, or configure the Supabase environment variables.'
     );
   }
 
+  if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(cleanEmail) || !cleanName || pass.length < 8) throw new Error('Use a valid email, name, and a password of at least 8 characters.');
+  consumeAuthAttempt();
+  setPendingSignupName(cleanName);
   const { data, error } = await supabase.auth.signUp({
     email: cleanEmail,
     password: pass,
     options: {
+      captchaToken,
       data: {
         full_name: cleanName,
         display_name: cleanName,
@@ -177,35 +171,25 @@ export async function signUpWithEmail(
     throw new Error('Sign up failed: no user account was returned.');
   }
 
+  if (!data.session) { clearPendingSignupName(); return null; }
   const mappedUser = mapSupabaseUser(data.user)!;
 
-  // Immediately save initial profile in Supabase database
-  try {
-    await saveUserData(data.user.id, {
-      studentName: cleanName,
-      displayName: cleanName,
-      email: cleanEmail,
-    });
-  } catch (dbErr) {
-    console.warn('Initial profile seed notice (will retry on next sync):', dbErr);
-  }
 
   return mappedUser;
 }
 
-/**
- * Log in an existing student with their email and password.
- */
-export async function loginWithEmail(email: string, pass: string): Promise<AppUser> {
+export async function loginWithEmail(email: string, pass: string, captchaToken?: string): Promise<AppUser> {
   if (!isSupabaseConfigured()) {
     throw new Error(
-      'Supabase is not configured yet! Please open src/services/supabase.ts and paste your Project URL and Publishable Key.'
+      'Account services are not configured. Use guest mode, or configure the Supabase environment variables.'
     );
   }
 
+  consumeAuthAttempt();
   const { data, error } = await supabase.auth.signInWithPassword({
     email: email.trim(),
     password: pass,
+    options: {captchaToken},
   });
 
   if (error) {
@@ -217,19 +201,22 @@ export async function loginWithEmail(email: string, pass: string): Promise<AppUs
     throw new Error('Sign in failed: no user account was returned.');
   }
 
+  resetAuthAttempts();
   return mapSupabaseUser(data.user)!;
 }
 
-/**
- * Sign in with Google (OAuth)
- */
-export async function loginWithGoogle(): Promise<AppUser> {
+export async function loginWithGoogle(): Promise<void> {
   if (!isSupabaseConfigured()) {
     throw new Error(
-      'Supabase is not configured yet! Please open src/services/supabase.ts and paste your Project URL and Publishable Key.'
+      'Account services are not configured. Use guest mode, or configure the Supabase environment variables.'
     );
   }
 
+  consumeAuthAttempt();
+  const settingsResponse = await fetch(`${SUPABASE_URL}/auth/v1/settings`, {headers:{apikey:SUPABASE_PUBLISHABLE_KEY}});
+  if (!settingsResponse.ok) throw new Error('Could not check Google sign-in. Please retry.');
+  const settings = await settingsResponse.json();
+  if (!settings.external?.google) throw new Error('Google sign-in is not enabled for this site yet. Use email sign-in or ask the site owner to enable Google in Supabase.');
   const { error } = await supabase.auth.signInWithOAuth({
     provider: 'google',
     options: {
@@ -242,22 +229,21 @@ export async function loginWithGoogle(): Promise<AppUser> {
     throw error;
   }
 
-  const { data: { user } } = await supabase.auth.getUser();
-  return mapSupabaseUser(user)!;
+  // OAuth completes through the auth listener after the redirect.
+  return;
 }
 
-/**
- * Send a password reset email to the student's inbox.
- */
-export async function resetPassword(email: string): Promise<void> {
+export async function resetPassword(email: string, captchaToken?: string): Promise<void> {
   if (!isSupabaseConfigured()) {
     throw new Error(
-      'Supabase is not configured yet! Please open src/services/supabase.ts and paste your Project URL and Publishable Key.'
+      'Account services are not configured. Use guest mode, or configure the Supabase environment variables.'
     );
   }
 
+  consumeAuthAttempt();
   const { error } = await supabase.auth.resetPasswordForEmail(email.trim(), {
-    redirectTo: typeof window !== 'undefined' ? `${window.location.origin}#login` : undefined,
+    captchaToken,
+    redirectTo: typeof window !== 'undefined' ? `${window.location.origin}/?recovery=1` : undefined,
   });
 
   if (error) {
@@ -266,18 +252,17 @@ export async function resetPassword(email: string): Promise<void> {
   }
 }
 
-/**
- * Log out the currently signed-in student.
- */
 export async function logoutUser(): Promise<void> {
   clearPendingSignupName();
-  if (isSupabaseConfigured()) {
-    try {
-      await supabase.auth.signOut();
-    } catch (err) {
-      console.warn('Logout signOut error:', err);
-    }
-  }
+  if (isSupabaseConfigured()) {const {error}=await supabase.auth.signOut();if(error) throw error;}
+}
+
+export async function requireOwner(expectedUid?: string): Promise<string> {
+  if (!isSupabaseConfigured()) throw new Error('Account services are not configured.');
+  const {data,error}=await supabase.auth.getUser();
+  if(error || !data.user) throw new Error('Your session expired. Please sign in again.');
+  if(expectedUid && expectedUid!==data.user.id) throw new Error('This data belongs to a different account.');
+  return data.user.id;
 }
 
 export function onAuthStateChanged(
@@ -302,40 +287,32 @@ export function onAuthStateChanged(
     return () => {};
   }
 
-  // 1. Immediately emit current cached session user
-  supabase.auth.getSession().then(({ data: { session } }) => {
-    callback(mapSupabaseUser(session?.user ?? null));
-  }).catch((err) => {
-    console.warn('getSession error:', err);
-    callback(null);
-  });
-
-  // 2. Listen to subsequent auth changes
-  const { data: { subscription } } = supabase.auth.onAuthStateChange((_event, session) => {
-    callback(mapSupabaseUser(session?.user ?? null));
-  });
-
-  return () => {
-    subscription.unsubscribe();
+  let active=true;
+  let lastUid: string | null | undefined;
+  const deliver=(user: SupabaseAuthUser | null)=>{
+    const uid=user?.id || null;
+    if (!active || uid===lastUid) return;
+    lastUid=uid;
+    setTimeout(()=>{if(active) Promise.resolve(callback(mapSupabaseUser(user))).catch(error=>console.error('Auth callback failed:',error));},0);
   };
+  const {data:{subscription}}=supabase.auth.onAuthStateChange((event,session)=>{
+    if(event==='PASSWORD_RECOVERY' && typeof window!=='undefined') window.dispatchEvent(new Event('skillpath-password-recovery'));
+    deliver(session?.user || null);
+  });
+  return ()=>{active=false;subscription.unsubscribe();};
 }
 
 // ---------------------------------------------------------------------------
 // 6. DATABASE SYNC: PROFILES & QUIZ ATTEMPTS
 // ---------------------------------------------------------------------------
 
-/**
- * Fetches the user profile and quiz attempts from Supabase tables:
- * - "profiles" (keyed by id = uid)
- * - "quiz_attempts" (keyed by user_id = uid)
- */
 export async function fetchUserData(uid: string): Promise<UserCloudData | null> {
   if (!isSupabaseConfigured() || !uid) {
     return null;
   }
 
+  await requireOwner(uid);
   try {
-    // 1. Fetch profile row from public.profiles
     const { data: profile, error: profileError } = await supabase
       .from('profiles')
       .select('*')
@@ -351,7 +328,6 @@ export async function fetchUserData(uid: string): Promise<UserCloudData | null> 
       return null;
     }
 
-    // 2. Fetch all quiz attempts from public.quiz_attempts
     let quizAttempts: QuizAttempt[] = [];
     const { data: attempts, error: attemptsError } = await supabase
       .from('quiz_attempts')
@@ -360,7 +336,7 @@ export async function fetchUserData(uid: string): Promise<UserCloudData | null> 
       .order('timestamp', { ascending: true });
 
     if (attemptsError) {
-      console.warn('Supabase quiz attempts query warning:', attemptsError);
+      throw attemptsError;
     } else if (attempts && attempts.length > 0) {
       quizAttempts = attempts.map((row) => ({
         id: row.id,
@@ -385,7 +361,7 @@ export async function fetchUserData(uid: string): Promise<UserCloudData | null> 
       studentYear: profile.student_year || 'Year 1 Undergraduate',
       studentFocus: profile.student_focus || '',
       studentStatement: profile.student_statement || '',
-      domainMetrics: profile.domain_metrics || {},
+      domainMetrics: sanitizeDomainMetrics(profile.domain_metrics),
       assessmentAnswers: profile.assessment_answers || {},
       selectedCareerId: profile.selected_career_id || 'frontend-developer',
       planProgressByCareer: profile.plan_progress || {},
@@ -400,17 +376,13 @@ export async function fetchUserData(uid: string): Promise<UserCloudData | null> 
   }
 }
 
-/**
- * Saves or updates student profile and quiz attempts in Supabase tables.
- * Uses atomic upsert so creating new or updating existing data works seamlessly.
- */
-export async function saveUserData(uid: string, data: Partial<UserCloudData>): Promise<void> {
+async function writeUserData(uid: string, data: Partial<UserCloudData>): Promise<void> {
   if (!isSupabaseConfigured() || !uid) {
-    return;
+    throw new Error('Account services are not configured.');
   }
+  await requireOwner(uid);
 
   try {
-    // 1. Build profile upsert payload
     const profileRow: Record<string, unknown> = {
       id: uid,
       updated_at: new Date().toISOString(),
@@ -437,7 +409,6 @@ export async function saveUserData(uid: string, data: Partial<UserCloudData>): P
       throw profileError;
     }
 
-    // 2. If quizAttempts are passed, upsert them into public.quiz_attempts
     if (data.quizAttempts && Array.isArray(data.quizAttempts)) {
       for (const attempt of data.quizAttempts) {
         const attemptRow = {
@@ -454,12 +425,13 @@ export async function saveUserData(uid: string, data: Partial<UserCloudData>): P
           domain_breakdowns: attempt.domainBreakdowns,
           strongest_domain: attempt.strongestDomain,
         };
+
         const { error: attemptError } = await supabase
           .from('quiz_attempts')
           .upsert(attemptRow, { onConflict: 'id' });
 
         if (attemptError) {
-          console.warn('Failed to upsert quiz attempt into Supabase:', attemptError);
+          throw attemptError;
         }
       }
     }
@@ -469,11 +441,24 @@ export async function saveUserData(uid: string, data: Partial<UserCloudData>): P
   }
 }
 
-// ---------------------------------------------------------------------------
-// 7. STUDY VAULT COMPATIBILITY (Metadata API)
+const saveQueues=new Map<string,Promise<void>>();
+function enqueueSave(uid:string,work:()=>Promise<void>):Promise<void> {
+  const next=(saveQueues.get(uid) || Promise.resolve()).catch(()=>{}).then(work);
+  saveQueues.set(uid,next);
+  void next.finally(()=>{if(saveQueues.get(uid)===next)saveQueues.delete(uid);}).catch(()=>{});
+  return next;
+}
+export function saveUserData(uid:string,data:Partial<UserCloudData>):Promise<void> {
+  return enqueueSave(uid,()=>writeUserData(uid,data));
+}
+export function clearUserQuizAttempts(uid:string):Promise<void> {
+  return enqueueSave(uid,async()=>{await requireOwner(uid);const {error}=await supabase.from('quiz_attempts').delete().eq('user_id',uid);if(error)throw error;});
+}
+
 // ---------------------------------------------------------------------------
 // 7. STUDY VAULT SUPABASE API (table: vault_items, storage: vault)
 // ---------------------------------------------------------------------------
+
 export type VaultKind = 'Note' | 'Assignment';
 export type VaultDomain = 'Programming' | 'Analytical thinking' | 'Communication' | 'Design' | 'Other';
 export type VaultStatus = 'To do' | 'In progress' | 'Submitted';
@@ -486,12 +471,11 @@ export interface VaultItem {
   domain: VaultDomain;
   tags: string[];
   note_text?: string | null;
-  // Aliased for UI convenience:
   content?: string | null;
   due_date?: string | null;
   dueDate?: string | null;
   submitted_at?: string | null;
-  status?: VaultStatus;
+  status?: VaultStatus | null;
   score?: number | null;
   file_path?: string | null;
   file_name?: string | null;
@@ -505,7 +489,6 @@ export interface VaultItem {
   updatedAt?: string;
 }
 
-// Backward compatibility alias for existing components
 export type VaultItemMetadata = VaultItem;
 
 export const MAX_FILE_SIZE_BYTES = 10 * 1024 * 1024; // 10 MB
@@ -520,6 +503,170 @@ export const ALLOWED_MIME_TYPES = [
   'text/x-markdown',
 ];
 
+export const MISSING_VAULT_SETUP_MESSAGE =
+  'Vault storage is not set up yet. Run the vault SQL script in Supabase SQL Editor.';
+
+/**
+ * Checks whether an error indicates that the "vault_items" table or "vault" storage bucket is missing.
+ */
+export function isMissingTableOrBucket(err: unknown): boolean {
+  if (!err) return false;
+
+  let raw = '';
+  if (err instanceof Error) {
+    raw = err.message;
+  } else if (typeof err === 'string') {
+    raw = err;
+  } else if (typeof err === 'object' && err !== null) {
+    const o = err as Record<string, unknown>;
+    raw = [
+      o.message,
+      o.error,
+      o.error_description,
+      o.details,
+      o.hint,
+      o.code,
+      o.statusCode,
+      o.statusText,
+    ].filter(Boolean).join(' ');
+  } else {
+    raw = String(err);
+  }
+
+  const lower = raw.toLowerCase();
+
+  const isTableMissing =
+    lower.includes('vault_items') &&
+    (lower.includes('does not exist') ||
+      lower.includes('not found') ||
+      lower.includes('could not find') ||
+      lower.includes('undefined table'));
+
+  const hasTableErrorCode =
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    ((err as any).code === '42P01' ||
+      (err as any).code === 'PGRST204' ||
+      (err as any).code === 'PGRST205');
+
+  const isBucketMissing =
+    lower.includes('bucket not found') ||
+    lower.includes('bucket_not_found') ||
+    (lower.includes('vault') && lower.includes('bucket') && (lower.includes('not found') || lower.includes('does not exist'))) ||
+    (lower.includes('bucket') && (lower.includes('does not exist') || lower.includes('not found')));
+
+  const isStorage404 =
+    typeof err === 'object' &&
+    err !== null &&
+    (('statusCode' in err && ((err as any).statusCode === 404 || (err as any).statusCode === '404')) ||
+      ('status' in err && ((err as any).status === 404 || (err as any).status === '404'))) &&
+    (lower.includes('bucket') || lower.includes('vault') || lower.includes('not found'));
+
+  return Boolean(isTableMissing || hasTableErrorCode || isBucketMissing || isStorage404);
+}
+
+/**
+ * Extracts the real error message string, never hiding errors with generic text.
+ * If the table or bucket is missing, returns the exact prompt requirement message.
+ */
+export function extractErrorMessage(err: unknown): string {
+  if (!err) return 'Unknown error occurred.';
+
+  if (isMissingTableOrBucket(err)) {
+    return MISSING_VAULT_SETUP_MESSAGE;
+  }
+
+  if (typeof err === 'string' && err.trim()) {
+    return err;
+  }
+
+  if (err instanceof Error && err.message && err.message.trim()) {
+    return err.message;
+  }
+
+  if (typeof err === 'object' && err !== null) {
+    const o = err as Record<string, unknown>;
+    if (typeof o.message === 'string' && o.message.trim()) {
+      return o.message;
+    }
+    if (typeof o.error_description === 'string' && o.error_description.trim()) {
+      return o.error_description;
+    }
+    if (typeof o.error === 'string' && o.error.trim()) {
+      return o.error;
+    }
+    if (typeof o.details === 'string' && o.details.trim()) {
+      return o.details;
+    }
+    try {
+      const json = JSON.stringify(err);
+      if (json && json !== '{}') return json;
+    } catch {
+      // fallback
+    }
+  }
+
+  return String(err);
+}
+
+/**
+ * Extracts lowercase file extension (without dot).
+ */
+export function getFileExtension(filename: string): string {
+  const lastDot = filename.lastIndexOf('.');
+  if (lastDot === -1 || lastDot === filename.length - 1) {
+    return '';
+  }
+  return filename.slice(lastDot + 1).toLowerCase();
+}
+
+/**
+ * Upload with contentType from file.type, or from the extension if file.type is empty.
+ */
+export function resolveContentType(file: { name: string; type?: string }): string {
+  if (file.type && file.type.trim() !== '') {
+    return file.type;
+  }
+  const ext = getFileExtension(file.name);
+  const mimeMap: Record<string, string> = {
+    pdf: 'application/pdf',
+    png: 'image/png',
+    jpg: 'image/jpeg',
+    jpeg: 'image/jpeg',
+    txt: 'text/plain',
+    md: 'text/markdown',
+    markdown: 'text/markdown',
+    json: 'application/json',
+    csv: 'text/csv',
+    gif: 'image/gif',
+    webp: 'image/webp',
+    html: 'text/html',
+    htm: 'text/html',
+  };
+  return mimeMap[ext] || 'application/octet-stream';
+}
+
+/**
+ * Builds the Storage path as <user_id>/<random-uuid>.<lowercase extension> only.
+ * Never puts the original file name in the path (handles spaces, brackets, dots).
+ */
+export function buildStoragePath(userId: string, originalFileName: string): { filePath: string; extension: string } {
+  if (!/^[a-zA-Z0-9-]+$/.test(userId)) throw new Error('Invalid user ID in storage path.');
+  const ext = getFileExtension(originalFileName);
+  const uuid =
+    typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function'
+      ? crypto.randomUUID()
+      : 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, (c) => {
+          const r = (Math.random() * 16) | 0;
+          const v = c === 'x' ? r : (r & 0x3) | 0x8;
+          return v.toString(16);
+        });
+  const fileNameInStorage = ext ? `${uuid}.${ext}` : uuid;
+  const filePath = `${userId}/${fileNameInStorage}`;
+  return { filePath, extension: ext };
+}
+
 /**
  * Validates a vault file by size, extension, and MIME type.
  * Explicitly rejects HTML, SVG, and script files.
@@ -532,9 +679,9 @@ export function validateVaultFile(file: File | { name: string; size: number; typ
     };
   }
 
+  if (!Number.isFinite(file.size) || file.size <= 0) return {valid:false,error:'File is empty or has an invalid size.'};
   const nameLower = file.name.toLowerCase();
 
-  // Strict security prohibition: Never allow HTML or SVG
   if (
     nameLower.endsWith('.html') ||
     nameLower.endsWith('.htm') ||
@@ -556,7 +703,6 @@ export function validateVaultFile(file: File | { name: string; size: number; typ
     };
   }
 
-  // Validate MIME type if provided
   if (file.type) {
     const mimeLower = file.type.toLowerCase();
     if (!ALLOWED_MIME_TYPES.includes(mimeLower)) {
@@ -567,92 +713,76 @@ export function validateVaultFile(file: File | { name: string; size: number; typ
     }
   }
 
+  const expected:Record<string,string[]>= {pdf:['application/pdf'],png:['image/png'],jpg:['image/jpeg','image/pjpeg'],jpeg:['image/jpeg','image/pjpeg'],txt:['text/plain'],md:['text/plain','text/markdown','text/x-markdown']};
+  if(file.type && !expected[getFileExtension(file.name)]?.includes(file.type.toLowerCase())) return {valid:false,error:'File extension and content type do not match.'};
   return { valid: true };
 }
 
 /**
- * Uploads a file to the private Supabase Storage bucket "vault"
- * Path format: <user_id>/<random-id>-<safe-filename>
- * Supports real-time progress reporting per upload.
+ * Uploads a file to the private Supabase Storage bucket "vault".
+ * - User ID comes from the logged-in Supabase session (supabase.auth.getUser).
+ * - Path format is: <user_id>/<random-uuid>.<lowercase extension> only.
+ * - Uploads with contentType from file.type, or from extension if file.type is empty.
  */
 export async function uploadVaultFile(
-  userId: string,
-  file: File,
-  onProgress?: (percent: number) => void
+  fileOrUserId: File | string,
+  fileOrProgress?: File | ((percent: number) => void),
+  maybeProgress?: (percent: number) => void
 ): Promise<{ filePath: string; fileName: string; fileType: string; fileSize: number }> {
-  if (!isSupabaseConfigured()) {
-    throw new Error('Supabase is not configured.');
+  let file: File;
+  let onProgress: ((percent: number) => void) | undefined;
+
+  if (typeof fileOrUserId === 'string' && fileOrProgress && typeof fileOrProgress !== 'function') {
+    file = fileOrProgress;
+    onProgress = maybeProgress;
+  } else if (fileOrUserId instanceof File) {
+    file = fileOrUserId;
+    if (typeof fileOrProgress === 'function') {
+      onProgress = fileOrProgress;
+    }
+  } else {
+    throw new Error('Invalid file provided for upload.');
   }
 
-  if (!navigator.onLine) {
-    throw new Error('You are currently offline. Check your network connection.');
+  if (!isSupabaseConfigured()) {
+    const err = new Error('Supabase is not configured.');
+    console.error('Upload aborted:', err);
+    throw err;
+  }
+
+  if (typeof navigator !== 'undefined' && navigator.onLine === false) {
+    const err = new Error('You are currently offline. Check your network connection.');
+    console.error('Upload aborted:', err);
+    throw err;
   }
 
   const validation = validateVaultFile(file);
   if (!validation.valid) {
-    throw new Error(validation.error || 'Invalid file.');
+    const err = new Error(validation.error || 'Invalid file.');
+    console.error('File validation failed:', err);
+    throw err;
   }
 
-  const cleanSafeName = file.name.replace(/[^a-zA-Z0-9._-]/g, '_');
-  const randomPrefix = Math.random().toString(36).substring(2, 10);
-  const filePath = `${userId}/${randomPrefix}-${cleanSafeName}`;
-
-  // Check for active session token
-  const { data: { session } } = await supabase.auth.getSession();
-  const token = session?.access_token || SUPABASE_PUBLISHABLE_KEY;
-
-  // Use XMLHttpRequest for real progress bar feedback when available
-  if (typeof XMLHttpRequest !== 'undefined' && onProgress) {
-    try {
-      await new Promise<void>((resolve, reject) => {
-        const xhr = new XMLHttpRequest();
-        const uploadUrl = `${SUPABASE_URL}/storage/v1/object/vault/${filePath}`;
-        xhr.open('POST', uploadUrl, true);
-        xhr.setRequestHeader('apikey', SUPABASE_PUBLISHABLE_KEY);
-        xhr.setRequestHeader('Authorization', `Bearer ${token}`);
-        xhr.setRequestHeader('x-upsert', 'false');
-
-        xhr.upload.onprogress = (evt) => {
-          if (evt.lengthComputable && onProgress) {
-            const pct = Math.round((evt.loaded / evt.total) * 100);
-            onProgress(Math.min(100, Math.max(0, pct)));
-          }
-        };
-
-        xhr.onload = () => {
-          if (xhr.status >= 200 && xhr.status < 300) {
-            onProgress(100);
-            resolve();
-          } else {
-            try {
-              const res = JSON.parse(xhr.responseText);
-              reject(new Error(res.message || res.error || `Upload failed with status ${xhr.status}`));
-            } catch {
-              reject(new Error(`Upload failed with status ${xhr.status}`));
-            }
-          }
-        };
-
-        xhr.onerror = () => reject(new Error('Network error during file upload. Check connection.'));
-        xhr.send(file);
-      });
-
-      return {
-        filePath,
-        fileName: file.name,
-        fileType: file.type || 'application/octet-stream',
-        fileSize: file.size,
-      };
-    } catch (xhrErr) {
-      console.warn('XHR upload fallback to standard storage upload:', xhrErr);
-    }
+  // 3. User ID must come from logged-in Supabase session (supabase.auth.getUser)
+  const { data: authData, error: userError } = await supabase.auth.getUser();
+  if (userError || !authData?.user) {
+    console.error('supabase.auth.getUser failed:', userError);
+    throw userError || new Error('You must be signed in to upload files to your Study Vault.');
   }
+  const userId = authData.user.id;
 
-  // Standard fallback using Supabase SDK
-  const { error: uploadError } = await supabase.storage
+  // 2. Build Storage path as <user_id>/<random-uuid>.<lowercase extension> only
+  const { filePath } = buildStoragePath(userId, file.name);
+
+  // 4. Upload with contentType from file.type, or from the extension if file.type is empty
+  const contentType = resolveContentType(file);
+
+  if (onProgress) onProgress(30);
+
+  const { data: uploadData, error: uploadError } = await supabase.storage
     .from('vault')
     .upload(filePath, file, {
-      cacheControl: '3600',
+      contentType,
       upsert: false,
     });
 
@@ -666,13 +796,212 @@ export async function uploadVaultFile(
   return {
     filePath,
     fileName: file.name,
-    fileType: file.type || 'application/octet-stream',
+    fileType: contentType,
     fileSize: file.size,
   };
 }
 
 /**
- * Creates a short-lived signed URL (default: 60 seconds) to open or download
+ * 4. Inserts a row into vault_items with ONLY these 12 columns:
+ * title, kind, domain, tags, note_text, due_date, submitted_at, status, score, file_path, file_name, file_type
+ * If the insert fails, deletes the uploaded file again.
+ */
+export async function insertVaultItemRow(row: {
+  title: string;
+  kind: VaultKind;
+  domain: VaultDomain;
+  tags: string[];
+  note_text?: string | null;
+  due_date?: string | null;
+  submitted_at?: string | null;
+  status?: VaultStatus | null;
+  score?: number | null;
+  file_path?: string | null;
+  file_name?: string | null;
+  file_type?: string | null;
+}): Promise<VaultItem> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const owner=await requireOwner();
+  if (!row.title?.trim()) throw new Error('A title is required.');
+  if(row.file_path && (!row.file_path.startsWith(`${owner}/`) || row.file_path.includes('..'))) throw new Error('Invalid file owner.');
+  const payload: Record<string, unknown> = {
+    user_id: owner,
+    title: row.title.trim(),
+    kind: row.kind,
+    domain: row.domain,
+    tags: Array.isArray(row.tags) ? row.tags : [],
+    note_text: row.note_text ?? null,
+    due_date: row.due_date ?? null,
+    submitted_at: row.submitted_at ?? null,
+    status: row.status ?? null,
+    score:
+      row.score !== null && row.score !== undefined && !Number.isNaN(Number(row.score))
+        ? Math.min(100, Math.max(0, Number(row.score)))
+        : null,
+    file_path: row.file_path ?? null,
+    file_name: row.file_name ?? null,
+    file_type: row.file_type ?? null,
+  };
+
+  const { data, error: insertError } = await supabase
+    .from('vault_items')
+    .insert([payload])
+    .select()
+    .single();
+
+  if (insertError) {
+    console.error('Supabase vault_items insert error:', insertError);
+    // If the insert fails, delete the uploaded file again
+    if (row.file_path) {
+      try {
+        console.warn('Deleting uploaded file from storage due to insert failure:', row.file_path);
+        const {error:cleanupError}=await supabase.storage.from('vault').remove([row.file_path]);
+        if(cleanupError)console.warn('Uploaded file cleanup also failed:',cleanupError);
+      } catch (delErr) {
+        console.error('Failed to clean up uploaded file after insert failure:', delErr);
+      }
+    }
+    throw insertError;
+  }
+
+  return {
+    id: String(data.id),
+    user_id: String(data.user_id || ''),
+    title: String(data.title || row.title),
+    kind: (data.kind as VaultKind) || row.kind,
+    domain: (data.domain as VaultDomain) || row.domain,
+    tags: Array.isArray(data.tags) ? data.tags : row.tags,
+    note_text: (data.note_text as string | null) ?? null,
+    content: (data.note_text as string | null) ?? null,
+    due_date: (data.due_date as string | null) ?? null,
+    dueDate: (data.due_date as string | null) ?? null,
+    submitted_at: (data.submitted_at as string | null) ?? null,
+    status: (data.status as VaultStatus) || null,
+    score: data.score !== null && data.score !== undefined ? Number(data.score) : null,
+    file_path: (data.file_path as string | null) ?? null,
+    file_name: (data.file_name as string | null) ?? row.file_name,
+    fileName: (data.file_name as string | null) ?? row.file_name,
+    file_type: (data.file_type as string | null) ?? row.file_type,
+    fileType: (data.file_type as string | null) ?? row.file_type,
+    file_size: null,
+    fileSize: null,
+    created_at: (data.created_at as string) || new Date().toISOString(),
+    createdAt: (data.created_at as string) || new Date().toISOString(),
+  };
+}
+
+/**
+ * Updates an existing vault item with ONLY the allowed columns.
+ */
+export async function updateVaultItemRow(
+  itemId: string,
+  updates: Partial<VaultItem>
+): Promise<VaultItem> {
+  if (!isSupabaseConfigured()) {
+    throw new Error('Supabase is not configured.');
+  }
+
+  const owner=await requireOwner();
+  if (updates.file_path && (!updates.file_path.startsWith(`${owner}/`) || updates.file_path.includes('..'))) throw new Error('Invalid file owner.');
+  if (updates.title !== undefined && !updates.title.trim()) throw new Error('A title is required.');
+  const payload: Record<string, unknown> = {};
+  if (updates.title !== undefined) payload.title = updates.title.trim();
+  if (updates.kind !== undefined) payload.kind = updates.kind;
+  if (updates.domain !== undefined) payload.domain = updates.domain;
+  if (updates.tags !== undefined) payload.tags = Array.isArray(updates.tags) ? updates.tags : [];
+  if (updates.note_text !== undefined || updates.content !== undefined) {
+    payload.note_text = updates.note_text ?? updates.content ?? null;
+  }
+  if (updates.due_date !== undefined || updates.dueDate !== undefined) {
+    payload.due_date = updates.due_date ?? updates.dueDate ?? null;
+  }
+  if (updates.submitted_at !== undefined) payload.submitted_at = updates.submitted_at ?? null;
+  if (updates.status !== undefined) payload.status = updates.status ?? null;
+  if (updates.score !== undefined) {
+    payload.score =
+      updates.score !== null && !Number.isNaN(Number(updates.score))
+        ? Math.min(100, Math.max(0, Number(updates.score)))
+        : null;
+  }
+  if (updates.file_path !== undefined) payload.file_path = updates.file_path ?? null;
+  if (updates.file_name !== undefined || updates.fileName !== undefined) {
+    payload.file_name = updates.file_name ?? updates.fileName ?? null;
+  }
+  if (updates.file_type !== undefined || updates.fileType !== undefined) {
+    payload.file_type = updates.file_type ?? updates.fileType ?? null;
+  }
+
+  const { data, error } = await supabase
+    .from('vault_items')
+    .update(payload)
+    .eq('user_id', owner)
+    .eq('id', itemId)
+    .select()
+    .single();
+
+  if (error) {
+    console.error('Supabase vault_items update error:', error);
+    throw error;
+  }
+
+  return {
+    id: String(data.id),
+    user_id: String(data.user_id || ''),
+    title: String(data.title),
+    kind: data.kind as VaultKind,
+    domain: data.domain as VaultDomain,
+    tags: Array.isArray(data.tags) ? data.tags : [],
+    note_text: (data.note_text as string | null) ?? null,
+    content: (data.note_text as string | null) ?? null,
+    due_date: (data.due_date as string | null) ?? null,
+    dueDate: (data.due_date as string | null) ?? null,
+    submitted_at: (data.submitted_at as string | null) ?? null,
+    status: (data.status as VaultStatus) || null,
+    score: data.score !== null && data.score !== undefined ? Number(data.score) : null,
+    file_path: (data.file_path as string | null) ?? null,
+    file_name: (data.file_name as string | null) ?? null,
+    fileName: (data.file_name as string | null) ?? null,
+    file_type: (data.file_type as string | null) ?? null,
+    fileType: (data.file_type as string | null) ?? null,
+    file_size: null,
+    fileSize: null,
+    created_at: (data.created_at as string) || new Date().toISOString(),
+    createdAt: (data.created_at as string) || new Date().toISOString(),
+  };
+}
+
+/**
+ * Backward compatibility wrapper for existing code:
+ * Routes to insertVaultItemRow or updateVaultItemRow with ONLY the 12 columns.
+ */
+export async function saveVaultMetadataItem(
+  uid: string,
+  item: Partial<VaultItem> & { title: string; kind: VaultKind; domain: VaultDomain; id?: string }
+): Promise<VaultItem> {
+  if (item.id && !item.id.startsWith('item_') && !item.id.startsWith('vault_')) {
+    return updateVaultItemRow(item.id, item);
+  }
+  return insertVaultItemRow({
+    title: item.title,
+    kind: item.kind,
+    domain: item.domain,
+    tags: Array.isArray(item.tags) ? item.tags : [],
+    note_text: item.note_text ?? item.content ?? null,
+    due_date: item.due_date ?? item.dueDate ?? null,
+    submitted_at: item.submitted_at ?? null,
+    status: item.status ?? (item.kind === 'Assignment' ? 'To do' : null),
+    score: item.score ?? null,
+    file_path: item.file_path ?? null,
+    file_name: item.file_name ?? item.fileName ?? null,
+    file_type: item.file_type ?? item.fileType ?? null,
+  });
+}
+
+/**
+ * Creates a short-lived signed URL (default: 60 seconds) to preview or download
  * private files securely from the "vault" bucket.
  */
 export async function getVaultFileSignedUrl(
@@ -684,6 +1013,8 @@ export async function getVaultFileSignedUrl(
     throw new Error('Supabase is not configured.');
   }
 
+  const owner=await requireOwner();
+  if (!filePath.startsWith(`${owner}/`) || filePath.includes('..')) throw new Error('Invalid file owner or path.');
   const options: { download?: string | boolean } = {};
   if (downloadName) {
     options.download = downloadName;
@@ -706,30 +1037,28 @@ export async function getVaultFileSignedUrl(
  */
 export async function deleteVaultStorageFile(filePath: string): Promise<void> {
   if (!isSupabaseConfigured() || !filePath) return;
-  try {
-    const { error } = await supabase.storage.from('vault').remove([filePath]);
-    if (error) {
-      console.warn('Could not remove file from storage bucket:', error);
-    }
-  } catch (err) {
-    console.warn('deleteVaultStorageFile error:', err);
-  }
+  const owner=await requireOwner();
+  if(!filePath.startsWith(`${owner}/`) || filePath.includes('..')) throw new Error('Invalid file owner or path.');
+  const {error}=await supabase.storage.from('vault').remove([filePath]);
+  if(error) throw error;
 }
 
 /**
- * Fetches all vault items for a user from the Supabase table "vault_items".
+ * Fetches all vault items from the Supabase table "vault_items".
  */
-export async function fetchVaultMetadataList(uid: string): Promise<VaultItem[]> {
-  if (!isSupabaseConfigured() || !uid) {
+export async function fetchVaultMetadataList(uid?: string): Promise<VaultItem[]> {
+  if (!isSupabaseConfigured()) {
     return [];
   }
 
   try {
-    const { data, error } = await supabase
-      .from('vault_items')
-      .select('*')
-      .eq('user_id', uid)
-      .order('created_at', { ascending: false });
+    let query = supabase.from('vault_items').select('*');
+
+    // If uid is explicitly provided, filter if desired; however RLS typically restricts rows
+    const owner=await requireOwner(uid);
+    query=query.eq('user_id',owner);
+
+    const { data, error } = await query.order('created_at', { ascending: false });
 
     if (error) {
       console.error('fetchVaultMetadataList error:', error);
@@ -739,26 +1068,26 @@ export async function fetchVaultMetadataList(uid: string): Promise<VaultItem[]> 
     if (!data) return [];
 
     return data.map((d) => ({
-      id: d.id,
-      user_id: d.user_id,
-      title: d.title,
-      kind: d.kind,
-      domain: d.domain,
+      id: String(d.id),
+      user_id: String(d.user_id || ''),
+      title: d.title || '',
+      kind: d.kind as VaultKind,
+      domain: d.domain as VaultDomain,
       tags: Array.isArray(d.tags) ? d.tags : [],
       note_text: d.note_text,
       content: d.note_text,
       due_date: d.due_date,
       dueDate: d.due_date,
       submitted_at: d.submitted_at,
-      status: d.status || 'To do',
+      status: (d.status as VaultStatus) || null,
       score: d.score !== null && d.score !== undefined ? Number(d.score) : null,
       file_path: d.file_path,
       file_name: d.file_name,
       fileName: d.file_name,
       file_type: d.file_type,
       fileType: d.file_type,
-      file_size: d.file_size,
-      fileSize: d.file_size,
+      file_size: null,
+      fileSize: null,
       created_at: d.created_at || new Date().toISOString(),
       createdAt: d.created_at || new Date().toISOString(),
       updatedAt: d.created_at || new Date().toISOString(),
@@ -770,103 +1099,43 @@ export async function fetchVaultMetadataList(uid: string): Promise<VaultItem[]> 
 }
 
 /**
- * Saves or updates a vault item in the Supabase table "vault_items".
- */
-export async function saveVaultMetadataItem(
-  uid: string,
-  item: Partial<VaultItem> & { id: string; title: string; kind: VaultKind; domain: VaultDomain }
-): Promise<VaultItem> {
-  if (!isSupabaseConfigured()) {
-    throw new Error('Supabase is not configured.');
-  }
-
-  const payload: Record<string, unknown> = {
-    id: item.id,
-    user_id: uid,
-    title: item.title.trim(),
-    kind: item.kind,
-    domain: item.domain,
-    tags: Array.isArray(item.tags) ? item.tags : [],
-    note_text: item.note_text ?? item.content ?? null,
-    due_date: item.due_date ?? item.dueDate ?? null,
-    submitted_at: item.submitted_at ?? null,
-    status: item.status ?? (item.kind === 'Assignment' ? 'To do' : null),
-    score: item.score !== undefined && item.score !== null && !Number.isNaN(Number(item.score))
-      ? Math.min(100, Math.max(0, Number(item.score)))
-      : null,
-    file_path: item.file_path ?? null,
-    file_name: item.file_name ?? item.fileName ?? null,
-    file_type: item.file_type ?? item.fileType ?? null,
-  };
-
-  const { data, error } = await supabase
-    .from('vault_items')
-    .upsert(payload, { onConflict: 'id' })
-    .select()
-    .single();
-
-  if (error) {
-    console.error('saveVaultMetadataItem error:', error);
-    throw error;
-  }
-
-  const saved = data || payload;
-  return {
-    id: String(saved.id),
-    user_id: uid,
-    title: String(saved.title),
-    kind: saved.kind as VaultKind,
-    domain: saved.domain as VaultDomain,
-    tags: Array.isArray(saved.tags) ? saved.tags : [],
-    note_text: saved.note_text as string | null,
-    content: saved.note_text as string | null,
-    due_date: saved.due_date as string | null,
-    dueDate: saved.due_date as string | null,
-    submitted_at: saved.submitted_at as string | null,
-    status: (saved.status as VaultStatus) || 'To do',
-    score: saved.score !== null && saved.score !== undefined ? Number(saved.score) : null,
-    file_path: saved.file_path as string | null,
-    file_name: saved.file_name as string | null,
-    fileName: saved.file_name as string | null,
-    file_type: saved.file_type as string | null,
-    fileType: saved.file_type as string | null,
-    created_at: (saved.created_at as string) || new Date().toISOString(),
-    createdAt: (saved.created_at as string) || new Date().toISOString(),
-  };
-}
-
-/**
  * Deletes a vault item from the "vault_items" table and deletes its associated
  * file from the private "vault" Storage bucket.
  */
 export async function deleteVaultMetadataItem(
-  uid: string,
-  itemId: string,
-  filePath?: string | null
-): Promise<void> {
-  if (!isSupabaseConfigured() || !itemId) return;
+  uidOrItemId: string,
+  itemIdOrFilePath?: string | null,
+  maybeFilePath?: string | null
+): Promise<{warning?:string}> {
+  if (!isSupabaseConfigured()) throw new Error('Account services are not configured.');
 
-  // 1. Delete associated storage file if path provided
-  if (filePath) {
-    await deleteVaultStorageFile(filePath);
+  let itemId: string;
+  let filePath: string | null = null;
+
+  if (maybeFilePath !== undefined) {
+    itemId = itemIdOrFilePath as string;
+    filePath = maybeFilePath;
+  } else if (itemIdOrFilePath) {
+    itemId = uidOrItemId;
+    filePath = itemIdOrFilePath;
+  } else {
+    itemId = uidOrItemId;
   }
 
-  // 2. Delete row from vault_items
-  const { error } = await supabase
-    .from('vault_items')
-    .delete()
-    .eq('id', itemId)
-    .eq('user_id', uid);
-
-  if (error) {
-    console.error('deleteVaultMetadataItem error:', error);
-    throw error;
-  }
+  const owner=await requireOwner();
+  const {data:item,error:readError}=await supabase.from('vault_items').select('file_path').eq('id',itemId).eq('user_id',owner).single();
+  if(readError || !item) throw readError || new Error('Item not found.');
+  // Use the stored path, never a caller-supplied path.
+  const {error}=await supabase.from('vault_items').delete().eq('id',itemId).eq('user_id',owner);
+  if(error)throw error;
+  if(item.file_path) {try{await deleteVaultStorageFile(item.file_path);}catch(error){return {warning:'Item removed, but its attachment could not be cleaned up. Please contact the workspace administrator.'};}}
+  return {};
 }
 
 // ---------------------------------------------------------------------------
 // 8. FEEDBACK & CALIBRATION SUBMISSION
 // ---------------------------------------------------------------------------
+
 export interface FeedbackSubmission {
   id?: string;
   clarityRating: number;
@@ -879,9 +1148,10 @@ export interface FeedbackSubmission {
 }
 
 export async function submitFeedback(feedback: FeedbackSubmission): Promise<void> {
+  if(!isSupabaseConfigured()) throw new Error("Feedback service is not configured.");
   if (isSupabaseConfigured()) {
     try {
-      await supabase.from('feedback').insert({
+      const {error}=await supabase.from('feedback').insert({
         clarity_rating: feedback.clarityRating,
         self_match_rating: feedback.selfMatchRating,
         expected_career: feedback.expectedCareer,
@@ -890,11 +1160,11 @@ export async function submitFeedback(feedback: FeedbackSubmission): Promise<void
         device_type: feedback.deviceType,
         created_at: new Date().toISOString(),
       });
+      if(error)throw error;
     } catch (err) {
-      console.warn('Feedback submission to Supabase notice:', err);
+      throw err;
     }
   }
 }
 
-// Backwards-compatibility alias
 export const submitFeedbackToFirestore = submitFeedback;

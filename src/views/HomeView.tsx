@@ -1,15 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * SkillPath AI – Clean Premium Dashboard Home View (#home)
- * 5-second clarity: a student opens Home and immediately understands:
- * 1. Exactly where they stand (greeting, next step, stateful primary CTA).
- * 2. 4-domain score cards with count-up, progress bars, and self vs measured labels.
- * 3. Two-column dashboard grid:
- *    - Left: Big Radar Chart (with scale overlap fixed) + 30-Day Plan card (with today's task checkbox) + Upcoming Deadlines
- *    - Right: Top Career Matches (top 3, fit %, key skill pill) + Aptitude Quiz card (self vs measured comparison mini-bars) + Quick Actions
- * 4. Grounded in brand: ink #17333b, mint #d7f78c, teal #276459, bg #f6f8f6.
- * 5. Honest disclaimer: "Scores are self-reported and not validated. An exploration tool, not a verdict."
+ * SkillPath AI - Clean Premium Dashboard Home View (#home)
  */
 
 import React, { useMemo } from 'react';
@@ -39,6 +31,8 @@ import {
 } from '../components/icons.tsx';
 
 export interface HomeViewProps {
+  hasAssessment: boolean;
+  hasSelfAssessment: boolean;
   onNavigate: (page: PageId) => void;
   onLoadDemo: () => void;
   onLoadSample: () => void;
@@ -57,6 +51,8 @@ export interface HomeViewProps {
 }
 
 export function HomeView({
+  hasAssessment,
+  hasSelfAssessment,
   onNavigate,
   onLoadDemo,
   onLoadSample,
@@ -72,14 +68,11 @@ export function HomeView({
   selectedCareerId,
   assessmentAnswers,
 }: HomeViewProps) {
-  const hasAssessment = Object.keys(assessmentAnswers).length > 0 || isDemoMode;
   const hasQuiz = Boolean(latestQuizAttempt);
-
   const activePlanTasks = planProgressByCareer[selectedCareerId] || {};
   const completedTasksCount = Object.values(activePlanTasks).filter(Boolean).length;
   const milestones = CAREER_PLANS[selectedCareerId] || CAREER_PLANS['frontend-developer'] || [];
 
-  // Flatten all tasks in milestone order
   const allCareerTasks = useMemo(() => {
     const list: {
       id: string;
@@ -89,7 +82,6 @@ export function HomeView({
       dayRange: string;
       milestoneTitle: string;
     }[] = [];
-
     for (const milestone of milestones) {
       for (const t of milestone.tasks) {
         list.push({
@@ -105,15 +97,12 @@ export function HomeView({
   const totalTasks = allCareerTasks.length || 12;
   const planPercentage = Math.round((completedTasksCount / totalTasks) * 100);
 
-  // Find the current uncompleted task for "Today: Day N"
   const todayTask = useMemo(() => {
     return allCareerTasks.find((t) => !activePlanTasks[t.id]) || allCareerTasks[0];
   }, [allCareerTasks, activePlanTasks]);
 
-  // Derive current roadmap day number (1 - 30)
   const currentDay = Math.min(30, Math.max(1, completedTasksCount * 2 + 1));
 
-  // Determine stateful Primary CTA for welcome strip
   const ctaState = useMemo(() => {
     if (!hasAssessment) {
       return {
@@ -138,7 +127,6 @@ export function HomeView({
     };
   }, [hasAssessment, hasQuiz, isDemoMode, currentDay, todayTask]);
 
-  // Upcoming deadlines: next 3 tasks that are not yet completed (or the next 3 after today)
   const upcomingDeadlines = useMemo(() => {
     const pending = allCareerTasks.filter((t) => !activePlanTasks[t.id]);
     if (pending.length === 0) {
@@ -184,7 +172,6 @@ export function HomeView({
 
   return (
     <div className="space-y-6 max-w-[1200px] mx-auto pb-12 animate-in fade-in duration-200">
-      
       {/* 1. Welcome Strip */}
       <section
         aria-label="Student overview and next step"
@@ -193,7 +180,7 @@ export function HomeView({
         <div className="space-y-1.5 min-w-0">
           <div className="flex items-center gap-2.5 flex-wrap">
             <h1 className="text-xl sm:text-2xl font-extrabold text-[#17333b] dark:text-white font-display tracking-tight truncate">
-              {displayName ? `Hi ${displayName} 👋` : 'Welcome to SkillPath AI 👋'}
+              {displayName ? `Hi ${displayName}` : 'Welcome to SkillPath AI'}
             </h1>
             {isDemoMode && (
               <span className="px-2.5 py-0.5 rounded-full text-[11px] font-bold bg-[#276459]/10 text-[#1b4e45] dark:bg-[#d7f78c]/15 dark:text-[#d7f78c] border border-[#276459]/20 dark:border-[#d7f78c]/30 font-mono">
@@ -205,7 +192,6 @@ export function HomeView({
             {ctaState.nextStep}
           </p>
         </div>
-
         <div className="flex items-center gap-3 shrink-0 self-start md:self-auto flex-wrap">
           <button
             onClick={() => onNavigate(ctaState.target)}
@@ -232,7 +218,7 @@ export function HomeView({
         </div>
       </section>
 
-      {/* 2. Row of 4 Domain Cards (Programming, Analytical thinking, Communication, Design) */}
+      {/* 2. Row of 4 Domain Cards */}
       <section
         aria-label="Domain scores breakdown"
         className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 sm:gap-6"
@@ -290,7 +276,6 @@ export function HomeView({
                 )}
               </div>
 
-              {/* Progress Bar & Subtext */}
               <div className="space-y-1.5">
                 <div className="w-full h-1.5 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden">
                   <div
@@ -301,14 +286,14 @@ export function HomeView({
                 <div className="flex items-center justify-between text-[10px] text-slate-500 dark:text-slate-400 font-mono">
                   {quizScore !== null && !isDemoMode ? (
                     <span className="font-medium text-[#1b4e45] dark:text-[#d7f78c]">
-                      Self {selfScore} / Measured {quizScore}
+                      Self {hasSelfAssessment ? selfScore : "not assessed"} / Measured {quizScore}
                     </span>
                   ) : score !== null ? (
                     <span>Deterministic formula</span>
                   ) : (
                     <span>Click to assess</span>
                   )}
-                  <span className="font-bold">{score !== null ? `${score}%` : '0%'}</span>
+                  <span className="font-bold">{score !== null ? `${score}%` : '—'}</span>
                 </div>
               </div>
             </div>
@@ -316,15 +301,10 @@ export function HomeView({
         })}
       </section>
 
-      {/* 3. Two-Column Dashboard Grid: 24px gap, 16-20px rounded cards */}
+      {/* 3. Two-Column Dashboard Grid */}
       <section className="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
-        
-        {/* ========================================================= */}
-        {/* LEFT COLUMN: Radar Chart + 30-Day Plan Card + Deadlines   */}
-        {/* ========================================================= */}
+        {/* LEFT COLUMN: Radar Chart + 30-Day Plan Card + Deadlines */}
         <div className="lg:col-span-7 space-y-6">
-          
-          {/* Card 1: Radar Chart (Big, Clean, Overlap Bug Fixed) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -348,7 +328,7 @@ export function HomeView({
               <div className="py-2 flex justify-center">
                 <RadarChart
                   scores={domainScores}
-                  previousScores={latestQuizAttempt && !isDemoMode ? selfReportedScores : undefined}
+                  previousScores={latestQuizAttempt && !isDemoMode && hasSelfAssessment ? selfReportedScores : undefined}
                   size={340}
                   className="w-full max-w-sm mx-auto"
                 />
@@ -384,7 +364,6 @@ export function HomeView({
             )}
           </div>
 
-          {/* Card 2: 30-Day Plan Card (Progress Ring/Bar + Today's Task + Checkbox) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -398,7 +377,6 @@ export function HomeView({
               </span>
             </div>
 
-            {/* Circular Mini Progress + Stats */}
             <div className="flex items-center gap-4 p-3.5 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800">
               <div className="relative w-12 h-12 flex items-center justify-center shrink-0">
                 <svg className="w-12 h-12 -rotate-90" viewBox="0 0 36 36">
@@ -437,7 +415,6 @@ export function HomeView({
               </div>
             </div>
 
-            {/* Today's Task with Checkbox */}
             {todayTask && (
               <div className="p-3.5 rounded-xl border border-slate-200/90 dark:border-slate-800 bg-white dark:bg-[#102025] space-y-2">
                 <div className="flex items-center justify-between">
@@ -482,7 +459,6 @@ export function HomeView({
             </button>
           </div>
 
-          {/* Card 3: Upcoming Deadlines (Next 3 tasks with day and tag) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -519,6 +495,7 @@ export function HomeView({
                         </span>
                       </div>
                     </div>
+
                     <div className="shrink-0 flex items-center gap-2">
                       <span className="px-2 py-0.5 rounded-md text-[10px] font-medium bg-[#276459]/10 text-[#1b4e45] dark:bg-[#d7f78c]/15 dark:text-[#d7f78c] max-w-[110px] truncate">
                         {task.milestoneTitle.split('&')[0].trim()}
@@ -536,12 +513,8 @@ export function HomeView({
           </div>
         </div>
 
-        {/* ========================================================= */}
-        {/* RIGHT COLUMN: Top Careers + Quiz Card + Quick Actions     */}
-        {/* ========================================================= */}
+        {/* RIGHT COLUMN: Top Careers + Quiz Card + Quick Actions */}
         <div className="lg:col-span-5 space-y-6">
-          
-          {/* Card 1: Top Career Matches (top 3 careers, fit %, key skill pill) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-4">
             <div className="flex items-center justify-between">
               <div>
@@ -549,7 +522,7 @@ export function HomeView({
                   Top Career Matches
                 </h2>
                 <p className="text-xs text-slate-500 dark:text-slate-400">
-                  Calculated from your verified domain aptitudes.
+                  Based on your assessment and available quiz results.
                 </p>
               </div>
               <button
@@ -587,7 +560,6 @@ export function HomeView({
                         </div>
                       </div>
 
-                      {/* Mini fit progress + Key Skill Pill */}
                       <div className="flex items-center justify-between gap-2 pt-0.5">
                         <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[10px] font-semibold bg-[#276459]/10 text-[#1b4e45] dark:bg-[#d7f78c]/15 dark:text-[#d7f78c] border border-[#276459]/15 dark:border-[#d7f78c]/20 truncate">
                           <SparklesIcon className="w-2.5 h-2.5 shrink-0" />
@@ -613,7 +585,6 @@ export function HomeView({
             )}
           </div>
 
-          {/* Card 2: Quiz Card ("Self-reported vs measured" comparison mini-bars or invite) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
@@ -631,7 +602,6 @@ export function HomeView({
 
             {latestQuizAttempt ? (
               <div className="space-y-3.5">
-                {/* 4-Domain Mini-bars comparison */}
                 <div className="space-y-2 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/60 border border-slate-100 dark:border-slate-800">
                   <div className="flex items-center justify-between text-[10px] font-mono text-slate-400 pb-1 border-b border-slate-200/60 dark:border-slate-800">
                     <span>Domain</span>
@@ -647,15 +617,14 @@ export function HomeView({
                             {DOMAINS[key].name}
                           </span>
                           <span className="font-mono text-[10px] text-slate-500 dark:text-slate-400">
-                            {self} pts • <span className="font-bold text-[#1b4e45] dark:text-[#d7f78c]">{measured} pts</span>
+                            {hasSelfAssessment ? `${self} pts` : "Not assessed"} • <span className="font-bold text-[#1b4e45] dark:text-[#d7f78c]">{measured} pts</span>
                           </span>
                         </div>
-                        {/* Dual mini-bar */}
                         <div className="grid grid-cols-2 gap-1.5">
                           <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
                             <div
                               className="h-full bg-slate-400 dark:bg-slate-600 rounded-full"
-                              style={{ width: `${self}%` }}
+                              style={{ width: `${hasSelfAssessment ? self : 0}%` }}
                               title={`Self-reported: ${self}`}
                             />
                           </div>
@@ -703,7 +672,6 @@ export function HomeView({
             )}
           </div>
 
-          {/* Card 3: Quick Actions (Retake assessment, Take quiz, Export report, Load demo) */}
           <div className="p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs hover:shadow-sm transition-all space-y-3">
             <h2 className="text-base font-bold text-slate-900 dark:text-white font-display">
               Quick Actions
@@ -742,7 +710,6 @@ export function HomeView({
         </div>
       </section>
 
-      {/* 4. Small Honest Footer Line */}
       <footer className="text-center pt-4">
         <p className="text-xs text-slate-500 dark:text-slate-400 font-medium leading-relaxed">
           Scores are self-reported and not validated. An exploration tool, not a verdict.

@@ -113,7 +113,7 @@ function RadarChartComponent({
                 className="text-slate-300 dark:text-slate-700/60"
                 strokeWidth={level === 100 ? 1.5 : 1}
               />
-              {/* Level scale labels positioned on 45-degree diagonal web spoke so they never collide with Programming axis or points */}
+              {/* Level scale labels positioned on 45-degree diagonal web spoke */}
               {level < 100 && (
                 <text
                   x={center + (level / 100) * radius * 0.7071 + 4}
@@ -159,7 +159,7 @@ function RadarChartComponent({
           </g>
         )}
 
-        {/* Previous Assessment Polygon (for Before vs After comparison or Self vs Quiz) */}
+        {/* Previous Assessment Polygon */}
         {previousPoints && (
           <g className="transition-all duration-300">
             <polygon
@@ -199,7 +199,6 @@ function RadarChartComponent({
               role="button"
               aria-label={`${DOMAINS[key].name}: ${score} points`}
             >
-              {/* Halo circle on hover */}
               {isHovered && (
                 <circle
                   cx={coord.x}
@@ -210,7 +209,6 @@ function RadarChartComponent({
                   className="animate-pulse"
                 />
               )}
-              {/* Solid point */}
               <circle
                 cx={coord.x}
                 cy={coord.y}
@@ -237,28 +235,24 @@ function RadarChartComponent({
           let textAnchor: 'start' | 'middle' | 'end' = 'middle';
 
           if (i === 0) {
-            // Top: Programming
             labelX = center;
             labelY = center - radius - 20;
             ptsX = center;
             ptsY = center - radius - 7;
             textAnchor = 'middle';
           } else if (i === 1) {
-            // Right: Analytical thinking
             labelX = center + radius + 14;
             labelY = center - 5;
             ptsX = center + radius + 14;
             ptsY = center + 10;
             textAnchor = 'start';
           } else if (i === 2) {
-            // Bottom: Communication
             labelX = center;
             labelY = center + radius + 18;
             ptsX = center;
             ptsY = center + radius + 32;
             textAnchor = 'middle';
           } else {
-            // Left: Design
             labelX = center - radius - 14;
             labelY = center - 5;
             ptsX = center - radius - 14;
@@ -300,7 +294,6 @@ function RadarChartComponent({
         })}
       </svg>
 
-      {/* Interactive Tooltip Card underneath on hover */}
       {hoveredDomain && (
         <div
           role="status"
@@ -316,29 +309,4 @@ function RadarChartComponent({
   );
 }
 
-export const RadarChart = React.memo(RadarChartComponent, (prev, next) => {
-  if (
-    prev.size !== next.size ||
-    prev.showBenchmark !== next.showBenchmark ||
-    prev.interactive !== next.interactive ||
-    prev.className !== next.className
-  ) {
-    return false;
-  }
-  // Deep comparison of domain scores to avoid re-rendering on reference changes
-  if (prev.scores !== next.scores) {
-    if (!prev.scores || !next.scores) return false;
-    for (const k of DOMAIN_KEYS) {
-      if (prev.scores[k] !== next.scores[k]) return false;
-    }
-  }
-  if (Boolean(prev.previousScores) !== Boolean(next.previousScores)) {
-    return false;
-  }
-  if (prev.previousScores && next.previousScores) {
-    for (const k of DOMAIN_KEYS) {
-      if (prev.previousScores[k] !== next.previousScores[k]) return false;
-    }
-  }
-  return true;
-});
+export const RadarChart = React.memo(RadarChartComponent);

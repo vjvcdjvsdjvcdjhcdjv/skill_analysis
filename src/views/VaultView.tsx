@@ -3,14 +3,10 @@
  * SPDX-License-Identifier: Apache-2.0
  * Study Vault View (#vault)
  * Powered exclusively by Supabase:
- * - Table: vault_items (id, user_id, title, kind, domain, tags, note_text, due_date, submitted_at, status, score, file_path, file_name, file_type, created_at)
- * - Private Storage bucket: "vault" (path: <user_id>/<random-id>-<safe-filename>)
- * - Short-lived 60-second signed URLs for preview and download
- * - Multi-file drag-and-drop & "Choose file from your laptop" button with individual progress bars
- * - "My progress" section: assignment score line chart over time, domain filter, trend comparisons (+8 pts / -3 pts / Not enough data yet)
- * - Deadline tracking: on-time, late, overdue counts
- * - "Plan suggestions" card with one-line WHY explanations (driven by src/utils/vaultInsights.ts)
- * - Zero IndexedDB / Firestore references
+ * - Table: vault_items (columns: title, kind, domain, tags, note_text, due_date, submitted_at, status, score, file_path, file_name, file_type)
+ * - Storage Bucket: "vault"
+ * - Storage Path: <user_id>/<random-uuid>.<lowercase extension> only
+ * - Full error transparency, real error text, retry on failed files, and missing setup detection.
  */
 
 import React, { useState, useEffect, useMemo, useRef } from 'react';
@@ -44,11 +40,15 @@ import {
   VaultDomain,
   VaultStatus,
   fetchVaultMetadataList,
-  saveVaultMetadataItem,
+  insertVaultItemRow,
+  updateVaultItemRow,
   deleteVaultMetadataItem,
   uploadVaultFile,
   getVaultFileSignedUrl,
   validateVaultFile,
+  isMissingTableOrBucket,
+  extractErrorMessage,
+  MISSING_VAULT_SETUP_MESSAGE,
   FirebaseUser,
 } from '../services/supabase.ts';
 import {
@@ -57,7 +57,7 @@ import {
   generateVaultSuggestions,
   VaultSuggestion,
 } from '../utils/vaultInsights.ts';
-import { DomainKey, DOMAINS } from '../utils/scoring.ts';
+import { DomainKey } from '../utils/scoring.ts';
 
 interface VaultViewProps {
   onNavigate: (page: PageId) => void;
@@ -67,7 +67,7 @@ interface VaultViewProps {
   onVaultItemsChange?: (items: VaultItem[]) => void;
 }
 
-interface UploadProgressItem {
+export interface UploadProgressItem {
   id: string;
   file: File;
   fileName: string;
@@ -75,6 +75,7 @@ interface UploadProgressItem {
   status: 'uploading' | 'complete' | 'error';
   error?: string;
   filePath?: string;
+  domain?: VaultDomain;
 }
 
 export function VaultView({
@@ -86,6 +87,7 @@ export function VaultView({
 }: VaultViewProps) {
   const [items, setItems] = useState<VaultItem[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [isMissingSetup, setIsMissingSetup] = useState<boolean>(false);
   const [toastMessage, setToastMessage] = useState<{ text: string; type: 'success' | 'error' } | null>(null);
 
   // Filter & Search States
@@ -127,6 +129,7 @@ export function VaultView({
   const [formStatus, setFormStatus] = useState<VaultStatus>('To do');
   const [formScore, setFormScore] = useState<string>('');
   const [modalFiles, setModalFiles] = useState<File[]>([]);
+  const [modalError, setModalError] = useState<string | null>(null);
   const [isSubmitting, setIsSubmitting] = useState<boolean>(false);
 
   // Show auto-dismiss toast
@@ -134,7 +137,7 @@ export function VaultView({
     setToastMessage({ text, type });
     setTimeout(() => {
       setToastMessage((prev) => (prev?.text === text ? null : prev));
-    }, 4500);
+    }, 6000);
   };
 
   // Fetch items from Supabase table vault_items
@@ -152,10 +155,16 @@ export function VaultView({
         const vaultData = await fetchVaultMetadataList(currentUser!.uid);
         if (!isMounted) return;
         setItems(vaultData);
+        setIsMissingSetup(false);
       } catch (err: unknown) {
         console.error('Failed to load study vault items:', err);
-        const msg = err instanceof Error ? err.message : String(err);
-        showToast(`Could not load Study Vault: ${msg}`, 'error');
+        if (isMissingTableOrBucket(err)) {
+          setIsMissingSetup(true);
+          showToast(MISSING_VAULT_SETUP_MESSAGE, 'error');
+        } else {
+          const realReason = extractErrorMessage(err);
+          showToast(`Could not load Study Vault: ${realReason}`, 'error');
+        }
       } finally {
         if (isMounted) setIsLoading(false);
       }
@@ -268,13 +277,100 @@ export function VaultView({
     return valid;
   };
 
+  /**
+   * Internal function to execute an upload and insertion for a single queue item.
+   */
+  const processUploadQueueItem = async (qItem: UploadProgressItem, targetDomain: VaultDomain) => {
+    setUploadQueue((prev) =>
+      prev.map((it) => (it.id === qItem.id ? { ...it, status: 'uploading', progress: 20, error: undefined } : it))
+    );
+
+    try {
+      // 1. Upload file with user_id from session and random uuid path and contentType
+      const uploaded = await uploadVaultFile(qItem.file, (pct) => {
+        setUploadQueue((prev) =>
+          prev.map((it) => (it.id === qItem.id ? { ...it, progress: pct } : it))
+        );
+      });
+
+      // 2. Only after successful upload, insert row into vault_items with ONLY the 12 columns
+      const cleanTitle = qItem.file.name
+        .replace(/\.[^/.]+$/, '')
+        .replace(/[-_]/g, ' ')
+        .trim();
+      const isAssignmentCandidate =
+        cleanTitle.toLowerCase().includes('assignment') ||
+        cleanTitle.toLowerCase().includes('lab') ||
+        cleanTitle.toLowerCase().includes('hw');
+
+      const savedItem = await insertVaultItemRow({
+        title: cleanTitle || 'Uploaded Document',
+        kind: isAssignmentCandidate ? 'Assignment' : 'Note',
+        domain: targetDomain,
+        tags: ['attachment'],
+        note_text: null,
+        due_date: null,
+        submitted_at: null,
+        status: isAssignmentCandidate ? 'To do' : null,
+        score: null,
+        file_path: uploaded.filePath,
+        file_name: uploaded.fileName,
+        file_type: uploaded.fileType,
+      });
+
+      setItems((prev) => [savedItem, ...prev]);
+      setUploadQueue((prev) =>
+        prev.map((it) => (it.id === qItem.id ? { ...it, status: 'complete', progress: 100 } : it))
+      );
+      showToast(`Uploaded "${uploaded.fileName}" to Study Vault.`);
+
+      // Auto-remove completed items after 3.5s
+      setTimeout(() => {
+        setUploadQueue((prev) => prev.filter((it) => it.id !== qItem.id));
+      }, 3500);
+    } catch (err: unknown) {
+      console.error('File upload failure:', err);
+      const realReason = extractErrorMessage(err);
+      if (isMissingTableOrBucket(err)) {
+        setIsMissingSetup(true);
+      }
+      setUploadQueue((prev) =>
+        prev.map((it) => (it.id === qItem.id ? { ...it, status: 'error', error: realReason } : it))
+      );
+      showToast(realReason, 'error');
+    }
+  };
+
+  /**
+   * Retry uploading a failed item from the queue
+   */
+  const handleRetryUpload = (queueItem: UploadProgressItem) => {
+    processUploadQueueItem(queueItem, queueItem.domain || 'Programming');
+  };
+
+  /**
+   * Retry all failed items in the queue
+   */
+  const handleRetryAllFailed = () => {
+    const failedItems = uploadQueue.filter((it) => it.status === 'error');
+    for (const item of failedItems) {
+      handleRetryUpload(item);
+    }
+  };
+
+  /**
+   * Dismiss a specific queue item
+   */
+  const handleDismissQueueItem = (id: string) => {
+    setUploadQueue((prev) => prev.filter((it) => it.id !== id));
+  };
+
   // Upload multiple files directly to Supabase Storage with individual progress bars
   const handleDirectUploadFiles = async (filesToUpload: File[], defaultDomain: VaultDomain = 'Programming') => {
     if (!currentUser) {
       showToast('Please sign in to upload files to your vault.', 'error');
       return;
     }
-
     if (!navigator.onLine) {
       showToast('You are currently offline. Check your internet connection.', 'error');
       return;
@@ -283,63 +379,20 @@ export function VaultView({
     const validFiles = validateAndFilterFiles(filesToUpload);
     if (validFiles.length === 0) return;
 
-    // Create progress tracking items
     const newQueueItems: UploadProgressItem[] = validFiles.map((f) => ({
       id: `up_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
       file: f,
       fileName: f.name,
       progress: 0,
       status: 'uploading',
+      domain: defaultDomain,
     }));
 
     setUploadQueue((prev) => [...prev, ...newQueueItems]);
 
     for (const qItem of newQueueItems) {
-      try {
-        const uploaded = await uploadVaultFile(currentUser.uid, qItem.file, (pct) => {
-          setUploadQueue((prev) =>
-            prev.map((it) => (it.id === qItem.id ? { ...it, progress: pct } : it))
-          );
-        });
-
-        // Create metadata record in vault_items table
-        const cleanTitle = qItem.file.name.replace(/\.[^/.]+$/, '').replace(/[-_]/g, ' ');
-        const isAssignmentCandidate = cleanTitle.toLowerCase().includes('assignment') || cleanTitle.toLowerCase().includes('lab') || cleanTitle.toLowerCase().includes('hw');
-        const itemRecord: Partial<VaultItem> & { id: string; title: string; kind: VaultKind; domain: VaultDomain } = {
-          id: `item_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`,
-          title: cleanTitle,
-          kind: isAssignmentCandidate ? 'Assignment' : 'Note',
-          domain: defaultDomain,
-          tags: ['attachment'],
-          file_path: uploaded.filePath,
-          file_name: uploaded.fileName,
-          file_type: uploaded.fileType,
-          file_size: uploaded.fileSize,
-          status: isAssignmentCandidate ? 'To do' : undefined,
-        };
-
-        const savedItem = await saveVaultMetadataItem(currentUser.uid, itemRecord);
-        setItems((prev) => [savedItem, ...prev]);
-
-        setUploadQueue((prev) =>
-          prev.map((it) => (it.id === qItem.id ? { ...it, status: 'complete', progress: 100 } : it))
-        );
-
-        showToast(`Uploaded "${uploaded.fileName}" to private Supabase vault.`);
-      } catch (err: unknown) {
-        console.error('File upload failure:', err);
-        const errMsg = err instanceof Error ? err.message : 'Upload failed.';
-        setUploadQueue((prev) =>
-          prev.map((it) => (it.id === qItem.id ? { ...it, status: 'error', error: errMsg } : it))
-        );
-        showToast(`Failed uploading ${qItem.fileName}: ${errMsg}`, 'error');
-      }
+      await processUploadQueueItem(qItem, defaultDomain);
     }
-
-    // Clear completed items from queue after 3 seconds
-    setTimeout(() => {
-      setUploadQueue((prev) => prev.filter((it) => it.status !== 'complete'));
-    }, 3500);
   };
 
   // Reset new item form
@@ -354,6 +407,7 @@ export function VaultView({
     setFormStatus('To do');
     setFormScore('');
     setModalFiles([]);
+    setModalError(null);
     if (modalFileInputRef.current) modalFileInputRef.current.value = '';
   };
 
@@ -364,19 +418,19 @@ export function VaultView({
       showToast('Please sign in to save vault items.', 'error');
       return;
     }
-
     if (!formTitle.trim()) {
-      showToast('Please provide a title for this item.', 'error');
+      setModalError('Please provide a title for this item.');
       return;
     }
 
     setIsSubmitting(true);
+    setModalError(null);
+
     try {
       const parsedTags = formTags
         .split(',')
         .map((t) => t.trim())
         .filter(Boolean);
-
       const parsedScore =
         formScore.trim() !== '' && !Number.isNaN(Number(formScore))
           ? Math.min(100, Math.max(0, Number(formScore)))
@@ -385,21 +439,18 @@ export function VaultView({
       let uploadedFilePath: string | null = null;
       let uploadedFileName: string | null = null;
       let uploadedFileType: string | null = null;
-      let uploadedFileSize: number | null = null;
 
-      // If user selected a file in the modal form, upload to private bucket first
+      // 4. If user selected a file in the modal form, upload to private bucket first
       if (modalFiles.length > 0) {
         const fileToUpload = modalFiles[0];
-        const uploaded = await uploadVaultFile(currentUser.uid, fileToUpload);
+        const uploaded = await uploadVaultFile(fileToUpload);
         uploadedFilePath = uploaded.filePath;
         uploadedFileName = uploaded.fileName;
         uploadedFileType = uploaded.fileType;
-        uploadedFileSize = uploaded.fileSize;
       }
 
-      const itemId = `vault_${Date.now()}_${Math.random().toString(36).substring(2, 7)}`;
-      const itemRecord: Partial<VaultItem> & { id: string; title: string; kind: VaultKind; domain: VaultDomain } = {
-        id: itemId,
+      // 4. Only after successful upload, insert a row with ONLY the 12 columns
+      const saved = await insertVaultItemRow({
         title: formTitle.trim(),
         kind: formKind,
         domain: formDomain,
@@ -410,29 +461,31 @@ export function VaultView({
           formKind === 'Assignment'
             ? formSubmittedAt || (formStatus === 'Submitted' ? new Date().toISOString().split('T')[0] : null)
             : null,
-        status: formKind === 'Assignment' ? formStatus : undefined,
+        status: formKind === 'Assignment' ? formStatus : null,
         score: formKind === 'Assignment' ? parsedScore : null,
         file_path: uploadedFilePath,
         file_name: uploadedFileName,
         file_type: uploadedFileType,
-        file_size: uploadedFileSize,
-      };
+      });
 
-      const saved = await saveVaultMetadataItem(currentUser.uid, itemRecord);
       setItems((prev) => [saved, ...prev]);
 
-      // If user provided additional files in the modal, upload them as linked items
+      // If user provided additional files in the modal, upload them as queued items
       if (modalFiles.length > 1) {
-        await handleDirectUploadFiles(modalFiles.slice(1), formDomain);
+        handleDirectUploadFiles(modalFiles.slice(1), formDomain);
       }
 
       setIsNewModalOpen(false);
       resetForm();
       showToast(`Added "${saved.title}" to your Study Vault.`);
     } catch (err: unknown) {
-      console.error('Failed to create vault item:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`Could not save item: ${msg}`, 'error');
+      console.error('File upload failure:', err);
+      const realReason = extractErrorMessage(err);
+      if (isMissingTableOrBucket(err)) {
+        setIsMissingSetup(true);
+      }
+      setModalError(realReason);
+      showToast(realReason, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -442,7 +495,6 @@ export function VaultView({
   const handleUpdateItem = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!currentUser || !editingItem) return;
-
     if (!editingItem.title.trim()) {
       showToast('Title cannot be blank.', 'error');
       return;
@@ -455,8 +507,7 @@ export function VaultView({
           ? Math.min(100, Math.max(0, Number(editingItem.score)))
           : null;
 
-      const updatedRecord: Partial<VaultItem> & { id: string; title: string; kind: VaultKind; domain: VaultDomain } = {
-        id: editingItem.id,
+      const saved = await updateVaultItemRow(editingItem.id, {
         title: editingItem.title.trim(),
         kind: editingItem.kind,
         domain: editingItem.domain,
@@ -467,21 +518,20 @@ export function VaultView({
           editingItem.kind === 'Assignment'
             ? editingItem.submitted_at || (editingItem.status === 'Submitted' ? new Date().toISOString().split('T')[0] : null)
             : null,
-        status: editingItem.kind === 'Assignment' ? editingItem.status || 'To do' : undefined,
+        status: editingItem.kind === 'Assignment' ? editingItem.status || 'To do' : null,
         score: editingItem.kind === 'Assignment' ? parsedScore : null,
         file_path: editingItem.file_path,
         file_name: editingItem.file_name || editingItem.fileName,
         file_type: editingItem.file_type || editingItem.fileType,
-      };
+      });
 
-      const saved = await saveVaultMetadataItem(currentUser.uid, updatedRecord);
       setItems((prev) => prev.map((item) => (item.id === saved.id ? saved : item)));
       setEditingItem(null);
       showToast('Updated vault item successfully.');
     } catch (err: unknown) {
       console.error('Failed to update vault item:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`Could not save changes: ${msg}`, 'error');
+      const realReason = extractErrorMessage(err);
+      showToast(`Could not save changes: ${realReason}`, 'error');
     } finally {
       setIsSubmitting(false);
     }
@@ -491,14 +541,14 @@ export function VaultView({
   const handleDeleteItem = async (item: VaultItem) => {
     if (!currentUser) return;
     try {
-      await deleteVaultMetadataItem(currentUser.uid, item.id, item.file_path);
+      const result=await deleteVaultMetadataItem(item.id, item.file_path);
       setItems((prev) => prev.filter((i) => i.id !== item.id));
       setDeletingItem(null);
-      showToast(`Deleted "${item.title}" and its private storage file.`);
+      showToast(result.warning || `Deleted "${item.title}" and its private storage file.`,result.warning?'error':'success');
     } catch (err: unknown) {
       console.error('Failed to delete item:', err);
-      const msg = err instanceof Error ? err.message : String(err);
-      showToast(`Delete failed: ${msg}`, 'error');
+      const realReason = extractErrorMessage(err);
+      showToast(`Delete failed: ${realReason}`, 'error');
     }
   };
 
@@ -522,14 +572,14 @@ export function VaultView({
         const fileType = (item.file_type || item.fileType || '').toLowerCase();
         const fileName = (item.file_name || item.fileName || '').toLowerCase();
 
-        // PDF: Safe in-modal preview with short-lived 60s signed URL
+        // PDF
         if (fileType === 'application/pdf' || fileName.endsWith('.pdf')) {
           setPreviewPdfUrl(signedUrl);
           setIsPreviewLoading(false);
           return;
         }
 
-        // Image (PNG/JPG): Preview safely in modal
+        // Image (PNG/JPG)
         if (
           fileType.startsWith('image/') ||
           fileName.endsWith('.png') ||
@@ -541,7 +591,7 @@ export function VaultView({
           return;
         }
 
-        // Text or Markdown: Fetch text securely from signed URL
+        // Text or Markdown
         if (fileName.endsWith('.txt') || fileName.endsWith('.md') || fileType.includes('text')) {
           const resp = await fetch(signedUrl);
           const text = await resp.text();
@@ -550,12 +600,13 @@ export function VaultView({
           return;
         }
 
-        // Other safe allowed files: trigger download directly without popup windows
+        // Other safe allowed files
         handleDownload(item);
         setPreviewItem(null);
       } catch (err: unknown) {
         console.error('Failed to preview file:', err);
-        showToast('Could not load secure preview. Please try again.', 'error');
+        const realReason = extractErrorMessage(err);
+        showToast(`Could not load preview: ${realReason}`, 'error');
         setPreviewItem(null);
       } finally {
         setIsPreviewLoading(false);
@@ -578,7 +629,8 @@ export function VaultView({
       showToast(`Downloading "${fileName}"...`);
     } catch (err: unknown) {
       console.error('Failed to download file:', err);
-      showToast('Could not generate download link. Please try again.', 'error');
+      const realReason = extractErrorMessage(err);
+      showToast(`Could not generate download link: ${realReason}`, 'error');
     }
   };
 
@@ -624,15 +676,16 @@ export function VaultView({
     );
   }
 
+  const failedUploadCount = uploadQueue.filter((it) => it.status === 'error').length;
+
   return (
     <div className="space-y-8 animate-in fade-in duration-200 pb-16">
-      
       {/* Toast Notification */}
       {toastMessage && (
         <div
           role="status"
           aria-live="polite"
-          className={`fixed bottom-20 right-4 z-50 px-4 py-3 rounded-2xl shadow-2xl border text-xs font-semibold flex items-center gap-2.5 animate-in slide-in-from-bottom-2 ${
+          className={`fixed bottom-20 right-4 z-50 px-4 py-3 rounded-2xl shadow-2xl border text-xs font-semibold flex items-center gap-2.5 max-w-md animate-in slide-in-from-bottom-2 ${
             toastMessage.type === 'success'
               ? 'bg-emerald-900 text-emerald-100 border-emerald-700'
               : 'bg-rose-900 text-rose-100 border-rose-700'
@@ -643,7 +696,25 @@ export function VaultView({
           ) : (
             <AlertTriangleIcon className="w-4 h-4 text-rose-400 shrink-0" />
           )}
-          <span>{toastMessage.text}</span>
+          <span className="leading-snug break-words">{toastMessage.text}</span>
+        </div>
+      )}
+
+      {/* 5. Warning banner when table or bucket is missing */}
+      {isMissingSetup && (
+        <div
+          role="alert"
+          className="p-4 sm:p-5 rounded-2xl bg-rose-50 dark:bg-rose-950/40 border-2 border-rose-400 dark:border-rose-800 text-rose-900 dark:text-rose-200 text-xs sm:text-sm flex items-start gap-3 shadow-md"
+        >
+          <AlertTriangleIcon className="w-5 h-5 text-rose-600 shrink-0 mt-0.5" />
+          <div className="space-y-1">
+            <p className="font-extrabold text-rose-950 dark:text-rose-100">
+              Vault storage is not set up yet. Run the vault SQL script in Supabase SQL Editor.
+            </p>
+            <p className="text-xs text-rose-800 dark:text-rose-300">
+              The <code>vault_items</code> table or <code>vault</code> storage bucket does not exist yet in your Supabase project. Please execute your schema script to enable study vault storage.
+            </p>
+          </div>
         </div>
       )}
 
@@ -698,50 +769,120 @@ export function VaultView({
         </div>
       </div>
 
-      {/* Multiple Files Upload Progress Area (shows live progress bars) */}
+      {/* 6. Upload Queue & Progress Area with Real Error Text and Retry Buttons */}
       {uploadQueue.length > 0 && (
-        <div className="p-4 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200 dark:border-slate-800 shadow-md space-y-3">
+        <div className="p-4 sm:p-5 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200 dark:border-slate-800 shadow-md space-y-3">
           <div className="flex items-center justify-between text-xs font-bold text-slate-900 dark:text-white">
             <span className="flex items-center gap-2">
-              <RefreshCwIcon className="w-3.5 h-3.5 animate-spin text-[#1b4e45] dark:text-[#d7f78c]" />
-              Uploading {uploadQueue.length} file{uploadQueue.length > 1 ? 's' : ''} to private Supabase storage...
+              {uploadQueue.some((it) => it.status === 'uploading') ? (
+                <>
+                  <RefreshCwIcon className="w-3.5 h-3.5 animate-spin text-[#1b4e45] dark:text-[#d7f78c]" />
+                  <span>Uploading {uploadQueue.filter((it) => it.status === 'uploading').length} file(s) to private vault...</span>
+                </>
+              ) : failedUploadCount > 0 ? (
+                <span className="text-rose-600 dark:text-rose-400 font-bold">
+                  {failedUploadCount} upload{failedUploadCount > 1 ? 's' : ''} failed
+                </span>
+              ) : (
+                <span className="text-emerald-600">All uploads finished</span>
+              )}
             </span>
+
+            {failedUploadCount > 1 && (
+              <button
+                type="button"
+                onClick={handleRetryAllFailed}
+                className="min-h-[36px] px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-colors inline-flex items-center gap-1.5"
+              >
+                <RefreshCwIcon className="w-3 h-3" />
+                <span>Retry All ({failedUploadCount})</span>
+              </button>
+            )}
           </div>
-          <div className="space-y-2">
+
+          <div className="space-y-3">
             {uploadQueue.map((item) => (
-              <div key={item.id} className="p-3 rounded-xl bg-slate-50 dark:bg-slate-900 border border-slate-200/60 dark:border-slate-800 space-y-1.5">
-                <div className="flex items-center justify-between text-xs">
+              <div
+                key={item.id}
+                className={`p-3.5 rounded-xl border space-y-2 transition-all ${
+                  item.status === 'error'
+                    ? 'bg-rose-50/70 dark:bg-rose-950/30 border-rose-300 dark:border-rose-900/80'
+                    : item.status === 'complete'
+                    ? 'bg-emerald-50/60 dark:bg-emerald-950/20 border-emerald-200 dark:border-emerald-900/50'
+                    : 'bg-slate-50 dark:bg-slate-900 border-slate-200/60 dark:border-slate-800'
+                }`}
+              >
+                <div className="flex items-center justify-between text-xs gap-3">
                   <span className="font-semibold text-slate-800 dark:text-slate-200 truncate max-w-sm">
                     {item.fileName}
                   </span>
-                  <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                  <div className="flex items-center gap-2 shrink-0">
                     {item.status === 'error' ? (
-                      <span className="text-rose-500 font-bold">Failed</span>
+                      <span className="text-rose-600 dark:text-rose-400 font-bold text-xs uppercase tracking-wide">
+                        Upload Failed
+                      </span>
+                    ) : item.status === 'complete' ? (
+                      <span className="text-emerald-600 dark:text-emerald-400 font-bold text-xs inline-flex items-center gap-1">
+                        <CheckCircleIcon className="w-3.5 h-3.5" />
+                        Complete
+                      </span>
                     ) : (
-                      `${item.progress}%`
+                      <span className="font-mono text-[11px] font-bold text-slate-600 dark:text-slate-400">
+                        {item.progress}%
+                      </span>
                     )}
-                  </span>
+                  </div>
                 </div>
+
+                {/* Progress bar */}
                 <div className="w-full h-1.5 rounded-full bg-slate-200 dark:bg-slate-800 overflow-hidden">
                   <div
                     className={`h-full transition-all duration-200 ${
                       item.status === 'error'
                         ? 'bg-rose-500'
-                        : item.progress === 100
+                        : item.status === 'complete'
                         ? 'bg-emerald-500'
                         : 'bg-[#1b4e45] dark:bg-[#d7f78c]'
                     }`}
                     style={{ width: `${item.progress}%` }}
                   />
                 </div>
-                {item.error && <p className="text-[10px] text-rose-600">{item.error}</p>}
+
+                {/* 1. Show the REAL reason in the red error text */}
+                {item.status === 'error' && item.error && (
+                  <div className="p-2.5 rounded-lg bg-rose-100/70 dark:bg-rose-950/60 border border-rose-300 dark:border-rose-900 text-xs text-rose-800 dark:text-rose-200 font-medium leading-relaxed break-words">
+                    <p className="font-bold text-[11px] uppercase tracking-wider mb-0.5">Error details:</p>
+                    <p>{item.error}</p>
+                  </div>
+                )}
+
+                {/* 6. Retry button on failed files */}
+                {item.status === 'error' && (
+                  <div className="flex items-center justify-end gap-2 pt-1">
+                    <button
+                      type="button"
+                      onClick={() => handleDismissQueueItem(item.id)}
+                      className="min-h-[36px] px-3 py-1 text-xs text-slate-600 dark:text-slate-400 hover:text-slate-900 dark:hover:text-white"
+                    >
+                      Dismiss
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => handleRetryUpload(item)}
+                      className="min-h-[36px] px-4 py-1.5 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1.5 focus-visible:ring-2 focus-visible:ring-rose-500"
+                    >
+                      <RefreshCwIcon className="w-3.5 h-3.5" />
+                      <span>Retry Upload</span>
+                    </button>
+                  </div>
+                )}
               </div>
             ))}
           </div>
         </div>
       )}
 
-      {/* Global Drag and Drop Dropzone Strip */}
+      {/* Drag and Drop Dropzone Strip */}
       <div
         onDragOver={(e) => {
           e.preventDefault();
@@ -784,7 +925,6 @@ export function VaultView({
             </h2>
           </div>
 
-          {/* Domain Filter for Line Chart */}
           <div className="flex items-center gap-2 text-xs">
             <span className="text-slate-500 font-semibold whitespace-nowrap">Filter Domain:</span>
             <select
@@ -804,7 +944,6 @@ export function VaultView({
 
         {/* Top 3 Metric Strips: Deadlines & On-Time Rates */}
         <div className="grid grid-cols-1 sm:grid-cols-3 gap-3">
-          {/* On-Time */}
           <div className="p-4 rounded-2xl bg-emerald-50/60 dark:bg-emerald-950/20 border border-emerald-200 dark:border-emerald-900/50 flex items-center justify-between">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-emerald-800 dark:text-emerald-300">
@@ -817,7 +956,6 @@ export function VaultView({
             <CheckCircleIcon className="w-6 h-6 text-emerald-600 dark:text-emerald-400" />
           </div>
 
-          {/* Late */}
           <div className="p-4 rounded-2xl bg-amber-50/60 dark:bg-amber-950/20 border border-amber-200 dark:border-amber-900/50 flex items-center justify-between">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-amber-800 dark:text-amber-300">
@@ -830,7 +968,6 @@ export function VaultView({
             <ClockIcon className="w-6 h-6 text-amber-600 dark:text-amber-400" />
           </div>
 
-          {/* Overdue */}
           <div className="p-4 rounded-2xl bg-rose-50/60 dark:bg-rose-950/20 border border-rose-200 dark:border-rose-900/50 flex items-center justify-between">
             <div>
               <span className="text-[10px] font-bold uppercase tracking-wider text-rose-800 dark:text-rose-300">
@@ -867,7 +1004,6 @@ export function VaultView({
           ) : (
             <div className="p-4 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200/80 dark:border-slate-800 overflow-x-auto">
               <svg viewBox="0 0 600 200" className="w-full min-w-[500px] h-48 overflow-visible">
-                {/* Horizontal Gridlines */}
                 {[0, 25, 50, 75, 100].map((level) => {
                   const y = 170 - (level / 100) * 140;
                   return (
@@ -879,8 +1015,6 @@ export function VaultView({
                     </g>
                   );
                 })}
-
-                {/* Score Points & Connecting Line */}
                 {(() => {
                   const n = scoredAssignments.length;
                   const pts = scoredAssignments.map((item, idx) => {
@@ -888,16 +1022,12 @@ export function VaultView({
                     const y = 170 - (Math.max(0, Math.min(100, Number(item.score))) / 100) * 140;
                     return { x, y, item };
                   });
-
                   const linePath = pts.map((p, idx) => `${idx === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
-
                   return (
                     <g>
-                      {/* Line */}
                       {n > 1 && (
                         <path d={linePath} fill="none" stroke="#276459" strokeWidth="2.5" className="dark:stroke-[#d7f78c] transition-all" />
                       )}
-                      {/* Dots and Labels */}
                       {pts.map((p) => (
                         <g key={p.item.id} className="group">
                           <circle cx={p.x} cy={p.y} r="5" fill="#ffffff" stroke="#17333b" strokeWidth="2" className="dark:fill-[#0e1c20] dark:stroke-[#d7f78c]" />
@@ -925,13 +1055,11 @@ export function VaultView({
             </h3>
             <span className="text-[11px] text-slate-400 font-normal">Requires at least 2 scored items</span>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3">
             {domainTrends.map((t) => {
               const isPositive = t.delta !== null && t.delta > 0;
               const isNegative = t.delta !== null && t.delta < 0;
               const isNoData = t.trendLabel === 'Not enough data yet';
-
               return (
                 <div
                   key={t.domain}
@@ -955,7 +1083,6 @@ export function VaultView({
                       {t.trendLabel}
                     </span>
                   </div>
-
                   <div className="text-[11px] text-slate-500 dark:text-slate-400 font-mono">
                     {t.scoredCount >= 2 ? (
                       <span>
@@ -996,7 +1123,6 @@ export function VaultView({
           </span>
         </div>
 
-        {/* Privacy notice banner */}
         <div className="p-3 rounded-xl bg-blue-50 dark:bg-blue-950/30 border border-blue-200/80 dark:border-blue-900/40 text-[11px] text-blue-900 dark:text-blue-200 flex items-start gap-2.5">
           <InfoIcon className="w-4 h-4 text-blue-600 dark:text-blue-400 shrink-0 mt-0.5" />
           <span>
@@ -1004,7 +1130,6 @@ export function VaultView({
           </span>
         </div>
 
-        {/* Suggestions List with one-line WHY explanations */}
         <div className="space-y-3 pt-1">
           {suggestions.map((sug) => (
             <div
@@ -1036,12 +1161,9 @@ export function VaultView({
                   </h4>
                 </div>
               </div>
-
               <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed">
                 {sug.description}
               </p>
-
-              {/* Explicit ONE-LINE WHY RATIONALE as requested */}
               <div className="p-2 rounded-lg bg-slate-50 dark:bg-slate-900 border border-slate-100 dark:border-slate-800/80 text-[11px] font-mono text-slate-700 dark:text-slate-300">
                 {sug.why}
               </div>
@@ -1055,7 +1177,6 @@ export function VaultView({
       {/* ======================================================== */}
       <div className="p-4 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-sm space-y-3">
         <div className="grid grid-cols-1 sm:grid-cols-12 gap-3 items-center">
-          {/* Search */}
           <div className="sm:col-span-5 relative">
             <SearchIcon className="w-4 h-4 absolute left-3 top-1/2 -translate-y-1/2 text-slate-400" />
             <input
@@ -1067,7 +1188,6 @@ export function VaultView({
             />
           </div>
 
-          {/* Kind Filter */}
           <div className="sm:col-span-3 flex items-center gap-1 overflow-x-auto text-xs py-1">
             {(['All', 'Note', 'Assignment'] as const).map((k) => (
               <button
@@ -1084,7 +1204,6 @@ export function VaultView({
             ))}
           </div>
 
-          {/* Sort By */}
           <div className="sm:col-span-4 flex items-center justify-end gap-2 text-xs">
             <span className="text-slate-500 dark:text-slate-400 font-medium whitespace-nowrap">Sort:</span>
             <select
@@ -1100,7 +1219,6 @@ export function VaultView({
           </div>
         </div>
 
-        {/* Domain Filter Chips */}
         <div className="flex items-center gap-1.5 flex-wrap pt-2 border-t border-slate-100 dark:border-slate-800 text-xs">
           <span className="text-slate-500 dark:text-slate-400 font-medium mr-1">Domain:</span>
           {(['All', 'Programming', 'Analytical thinking', 'Communication', 'Design', 'Other'] as const).map((d) => (
@@ -1117,7 +1235,6 @@ export function VaultView({
             </button>
           ))}
 
-          {/* Status Filter for Assignments */}
           {kindFilter !== 'Note' && (
             <div className="flex items-center gap-1 ml-auto">
               <span className="text-slate-500 dark:text-slate-400 font-medium mr-1">Status:</span>
@@ -1182,7 +1299,6 @@ export function VaultView({
                 }`}
               >
                 <div className="space-y-3">
-                  {/* Badges */}
                   <div className="flex items-center justify-between gap-2 flex-wrap">
                     <div className="flex items-center gap-1.5 flex-wrap">
                       <span
@@ -1220,19 +1336,16 @@ export function VaultView({
                     )}
                   </div>
 
-                  {/* Title */}
                   <h3 className="font-bold text-base text-slate-900 dark:text-white leading-snug break-words">
                     {item.title}
                   </h3>
 
-                  {/* Note Content preview */}
                   {(item.note_text || item.content) && (
                     <p className="text-xs text-slate-600 dark:text-slate-400 line-clamp-3 leading-relaxed whitespace-pre-wrap">
                       {item.note_text || item.content}
                     </p>
                   )}
 
-                  {/* Due Date & Submission details */}
                   {item.kind === 'Assignment' && (
                     <div className="space-y-1 text-xs text-slate-500 dark:text-slate-400 pt-1 border-t border-slate-100 dark:border-slate-800/60">
                       {dueDateStr && (
@@ -1250,7 +1363,6 @@ export function VaultView({
                     </div>
                   )}
 
-                  {/* Attached File in Private Cloud Bucket */}
                   {hasFile && (
                     <div className="pt-2 border-t border-slate-100 dark:border-slate-800/80">
                       <div className="flex items-center justify-between text-xs">
@@ -1260,11 +1372,6 @@ export function VaultView({
                             {item.file_name || item.fileName || 'Attachment'}
                           </span>
                         </div>
-                        {(item.file_size || item.fileSize) && (
-                          <span className="text-[10px] text-slate-400 font-mono shrink-0 ml-1">
-                            {((item.file_size || item.fileSize || 0) / (1024 * 1024)).toFixed(1)} MB
-                          </span>
-                        )}
                       </div>
                       <div className="mt-1">
                         <span className="inline-flex items-center gap-1 text-[10px] text-emerald-700 dark:text-emerald-400 font-semibold">
@@ -1275,7 +1382,6 @@ export function VaultView({
                     </div>
                   )}
 
-                  {/* Tags */}
                   {item.tags.length > 0 && (
                     <div className="flex items-center gap-1 flex-wrap pt-1">
                       {item.tags.map((tag) => (
@@ -1291,7 +1397,6 @@ export function VaultView({
                   )}
                 </div>
 
-                {/* Card Actions */}
                 <div className="pt-3 border-t border-slate-100 dark:border-slate-800 flex items-center justify-between gap-1 text-xs">
                   <div className="flex items-center gap-1">
                     {(item.note_text || item.content || hasFile) && (
@@ -1359,8 +1464,25 @@ export function VaultView({
               </button>
             </div>
 
+            {/* 1. Show real error in red text */}
+            {modalError && (
+              <div className="p-3 rounded-xl bg-rose-50 dark:bg-rose-950/50 border border-rose-300 dark:border-rose-900 text-xs text-rose-800 dark:text-rose-200 font-medium leading-relaxed flex items-start justify-between gap-3">
+                <div className="flex-1">
+                  <p className="font-bold uppercase tracking-wider text-[11px] mb-0.5">Error:</p>
+                  <p className="break-words">{modalError}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={(e) => handleCreateItem(e as any)}
+                  className="shrink-0 min-h-[32px] px-3 py-1 rounded-lg bg-rose-600 hover:bg-rose-700 text-white text-xs font-bold transition-all shadow-xs inline-flex items-center gap-1"
+                >
+                  <RefreshCwIcon className="w-3.5 h-3.5" />
+                  <span>Retry</span>
+                </button>
+              </div>
+            )}
+
             <form onSubmit={handleCreateItem} className="space-y-4">
-              {/* Kind Selector */}
               <div className="grid grid-cols-2 gap-2 p-1 rounded-xl bg-slate-100 dark:bg-slate-900 border border-slate-200 dark:border-slate-800 text-xs font-bold">
                 <button
                   type="button"
@@ -1386,7 +1508,6 @@ export function VaultView({
                 </button>
               </div>
 
-              {/* Title */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                   Title *
@@ -1401,7 +1522,6 @@ export function VaultView({
                 />
               </div>
 
-              {/* Domain & Tags */}
               <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                 <div>
                   <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
@@ -1433,7 +1553,6 @@ export function VaultView({
                 </div>
               </div>
 
-              {/* Assignment Fields: Due Date, Status, Submitted Date, Score */}
               {formKind === 'Assignment' && (
                 <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-3 p-3.5 rounded-2xl bg-slate-50 dark:bg-slate-900/60 border border-slate-200 dark:border-slate-800">
                   <div>
@@ -1495,7 +1614,6 @@ export function VaultView({
                 </div>
               )}
 
-              {/* Note Content */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
                   Note Content / Summary
@@ -1509,10 +1627,9 @@ export function VaultView({
                 />
               </div>
 
-              {/* File Attachment Dropzone & Button */}
               <div>
                 <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">
-                  Attach Files (PDF, PNG, JPG, TXT, MD – max 10 MB each)
+                  Attach Files (PDF, PNG, JPG, TXT, MD • max 10 MB each)
                 </label>
                 <div
                   onDragOver={(e) => {
@@ -1556,7 +1673,6 @@ export function VaultView({
                   </div>
                 </div>
 
-                {/* Selected Files List in Modal */}
                 {modalFiles.length > 0 && (
                   <div className="mt-2 space-y-1.5">
                     {modalFiles.map((f, idx) => (
@@ -1584,7 +1700,6 @@ export function VaultView({
                 )}
               </div>
 
-              {/* Form Buttons */}
               <div className="flex items-center justify-end gap-3 pt-3 border-t border-slate-100 dark:border-slate-800">
                 <button
                   type="button"
@@ -1654,7 +1769,6 @@ export function VaultView({
                     <option value="Other">Other</option>
                   </select>
                 </div>
-
                 {editingItem.kind === 'Assignment' && (
                   <div>
                     <label className="block text-xs font-bold text-slate-700 dark:text-slate-300 uppercase tracking-wider mb-1">

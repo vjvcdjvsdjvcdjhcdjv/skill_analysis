@@ -1,11 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Dashboard View:
- * The central diagnostic cockpit displaying real animated SVG radar chart,
- * count-up numbers for all 4 domains, formula factor breakdowns, Before vs After
- * comparative progress (when 2+ snapshots exist), top pathway match, and growth opportunities.
- * Features the "Inputs Behind These Scores" transparent calibration table.
+ * Dashboard View
  */
 
 import React, { useState, useEffect } from 'react';
@@ -35,7 +31,6 @@ import {
   CheckCircleIcon,
   InfoIcon,
   ZapIcon,
-  TrophyIcon,
   VaultIcon,
   AlertTriangleIcon,
   BellIcon,
@@ -49,6 +44,8 @@ import {
 } from '../utils/planNotifications.ts';
 
 interface DashboardViewProps {
+  hasAssessment: boolean;
+  hasSelfAssessment: boolean;
   studentName: string;
   studentYear: string;
   domainScores: Record<DomainKey, number>;
@@ -67,6 +64,8 @@ interface DashboardViewProps {
 }
 
 export function DashboardView({
+  hasAssessment,
+  hasSelfAssessment,
   studentName,
   studentYear,
   domainScores,
@@ -86,7 +85,6 @@ export function DashboardView({
   const [showBenchmark, setShowBenchmark] = useState(false);
   const [expandedDomain, setExpandedDomain] = useState<DomainKey | null>('programming');
 
-  // Daily notification check state for incomplete plan tasks
   const [dailyPlanToast, setDailyPlanToast] = useState<{
     visible: boolean;
     title: string;
@@ -95,8 +93,8 @@ export function DashboardView({
     careerTitle: string;
   } | null>(null);
 
-  // Check once per day if the user has incomplete tasks in their active career plan
   useEffect(() => {
+    if (!hasAssessment) return;
     try {
       const today = new Date().toISOString().split('T')[0];
       const milestones =
@@ -104,7 +102,6 @@ export function DashboardView({
         (selectedCareerId ? CAREER_PLANS[selectedCareerId] : CAREER_PLANS['frontend-developer']) ||
         [];
       const { incompleteTasks } = getPlanTaskCounts(milestones, activeCareerTasks);
-
       const lastCheck = localStorage.getItem(DAILY_NOTIFICATION_STORAGE_KEY);
       const shouldNotify = shouldShowDailyPlanNotification(lastCheck, today, incompleteTasks);
 
@@ -114,7 +111,6 @@ export function DashboardView({
           careerFits[0]?.career ||
           CAREERS[0];
         const { title, message } = getDailyNotificationMessage(career.title, incompleteTasks);
-
         setDailyPlanToast({
           visible: true,
           title,
@@ -122,15 +118,13 @@ export function DashboardView({
           incompleteCount: incompleteTasks,
           careerTitle: career.title,
         });
-
         localStorage.setItem(DAILY_NOTIFICATION_STORAGE_KEY, today);
       }
     } catch (err) {
       console.warn('Daily notification check notice:', err);
     }
-  }, [activeCareerTasks, activePlanMilestones, selectedCareerId, careerFits]);
+  }, [hasAssessment, activeCareerTasks, activePlanMilestones, selectedCareerId, careerFits]);
 
-  // Auto-dismiss after 10 seconds (or user can dismiss manually)
   useEffect(() => {
     if (!dailyPlanToast?.visible) return;
     const timer = setTimeout(() => {
@@ -139,7 +133,6 @@ export function DashboardView({
     return () => clearTimeout(timer);
   }, [dailyPlanToast?.visible]);
 
-  // Representative peer cohort benchmark
   const peerCohortAverage: Record<DomainKey, number> = {
     programming: 50,
     analytical: 55,
@@ -150,7 +143,6 @@ export function DashboardView({
   const topFit = careerFits[0];
   const domainKeys: DomainKey[] = ['programming', 'analytical', 'communication', 'design'];
 
-  // Check if 2+ snapshots exist for "Before vs After" comparison
   const hasHistory = snapshots.length >= 2;
   const previousSnapshot = hasHistory ? snapshots[snapshots.length - 2] : null;
   const latestSnapshot = hasHistory ? snapshots[snapshots.length - 1] : null;
@@ -158,7 +150,6 @@ export function DashboardView({
     ? computeScoreDeltas(previousSnapshot.scores, domainScores)
     : [];
 
-  // Evidence in your vault count per domain (Display only - does not change career scores)
   const vaultCountByDomain: Record<DomainKey, number> = {
     programming: vaultItems.filter((i) => i.domain === 'Programming').length,
     analytical: vaultItems.filter((i) => i.domain === 'Analytical thinking').length,
@@ -167,7 +158,6 @@ export function DashboardView({
   };
   const totalVaultEvidence = vaultItems.length;
 
-  // Upcoming deadlines (next 3, overdue in red - Display only)
   const todayStr = new Date().toISOString().split('T')[0];
   const upcomingDeadlines = vaultItems
     .filter((item) => item.kind === 'Assignment' && (item.due_date || item.dueDate))
@@ -182,16 +172,27 @@ export function DashboardView({
       };
     })
     .sort((a, b) => {
-      // Prioritize overdue items, then chronological due dates
       if (a.isOverdue && !b.isOverdue) return -1;
       if (!a.isOverdue && b.isOverdue) return 1;
       return new Date(a.dueStr).getTime() - new Date(b.dueStr).getTime();
     })
     .slice(0, 3);
 
+  if (!hasAssessment) return (
+    <section className="max-w-3xl mx-auto p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200 dark:border-slate-800 space-y-5">
+      <p className="text-sm font-semibold">Your dashboard</p>
+      <h1 className="text-3xl font-bold">No scores yet</h1>
+      <p>Welcome{studentName ? `, ${studentName}` : ''}! Complete an assessment or aptitude quiz to see your own scores, strengths, and career matches.</p>
+      <div className="flex flex-wrap gap-3">
+        <button className="px-5 py-3 rounded-xl bg-[#276459] text-white" onClick={()=>onNavigate('assessment')}>Start assessment</button>
+        <button className="px-5 py-3 rounded-xl border" onClick={()=>onNavigate('quiz')}>Take aptitude quiz</button>
+        <button className="px-5 py-3 rounded-xl border" onClick={()=>onNavigate('home')}>Back to Home</button>
+      </div>
+    </section>
+  );
+
   return (
     <div className="space-y-10 pb-16 relative">
-      {/* Daily Notification Toast for Incomplete Career Plan Tasks */}
       {dailyPlanToast?.visible && (
         <aside
           role="status"
@@ -229,7 +230,7 @@ export function DashboardView({
                 <button
                   type="button"
                   onClick={() => setDailyPlanToast((prev) => (prev ? { ...prev, visible: false } : null))}
-                  className="min-h-[44px] px-3 py-1.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 text-xs font-medium transition-colors"
+                  className="min-h-[44px] px-3.5 py-1.5 rounded-xl text-slate-300 hover:text-white hover:bg-white/10 text-xs font-medium transition-colors"
                 >
                   Dismiss
                 </button>
@@ -247,7 +248,6 @@ export function DashboardView({
         </aside>
       )}
 
-      {/* Top Welcome & Context Banner */}
       <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 p-6 rounded-2xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs">
         <div>
           <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
@@ -276,7 +276,6 @@ export function DashboardView({
         </div>
       </div>
 
-      {/* Before vs After Progression Card (Visible when 2+ snapshots exist) */}
       {hasHistory && previousSnapshot && (
         <section className="p-6 sm:p-7 rounded-3xl bg-white dark:bg-[#14262b] border border-[#1b4e45]/30 dark:border-[#d7f78c]/30 shadow-sm space-y-4">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -293,7 +292,6 @@ export function DashboardView({
               Comparing <span className="font-semibold text-slate-900 dark:text-white">{previousSnapshot.dateLabel}</span> → <span className="font-semibold text-slate-900 dark:text-white">Latest ({latestSnapshot?.dateLabel})</span>
             </div>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 pt-1">
             {scoreDeltas.map((comp) => {
               const isPositive = comp.delta > 0;
@@ -331,10 +329,7 @@ export function DashboardView({
         </section>
       )}
 
-      {/* Main Grid: Radar Chart + 4 Domain Score Cards */}
       <div className="grid grid-cols-1 lg:grid-cols-12 gap-8 items-start">
-        
-        {/* Left Column: Interactive Radar Visualizer */}
         <div className="lg:col-span-5 p-6 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-sm flex flex-col items-center">
           <div className="w-full flex items-center justify-between border-b border-slate-100 dark:border-slate-800 pb-3 mb-4">
             <span className="text-xs font-bold uppercase tracking-wider text-slate-700 dark:text-slate-300">
@@ -344,7 +339,6 @@ export function DashboardView({
               4 Dimensions
             </span>
           </div>
-
           <RadarChart
             scores={domainScores}
             previousScores={hasHistory && previousSnapshot ? previousSnapshot.scores : undefined}
@@ -353,8 +347,6 @@ export function DashboardView({
             size={320}
             interactive={true}
           />
-
-          {/* Legend for Previous Assessment Overlay if available */}
           {hasHistory && previousSnapshot && (
             <div className="mt-3 flex items-center gap-4 text-xs text-slate-600 dark:text-slate-400">
               <div className="flex items-center gap-1.5">
@@ -367,7 +359,6 @@ export function DashboardView({
               </div>
             </div>
           )}
-
           {showBenchmark && (
             <div className="mt-2 pt-2 border-t border-slate-100 dark:border-slate-800 flex items-center gap-4 text-xs text-slate-600 dark:text-slate-400">
               <div className="flex items-center gap-1.5">
@@ -376,7 +367,6 @@ export function DashboardView({
               </div>
             </div>
           )}
-
           <div className="mt-4 p-3 rounded-xl bg-slate-50 dark:bg-slate-900/40 border border-slate-200 dark:border-slate-800/80 w-full text-xs text-slate-700 dark:text-slate-300 flex items-start gap-2">
             <InfoIcon className="w-4 h-4 text-[#1b4e45] dark:text-[#d7f78c] shrink-0 mt-0.5" />
             <span>
@@ -385,7 +375,6 @@ export function DashboardView({
           </div>
         </div>
 
-        {/* Right Column: 4 Domain Cards with Count-up and Factor Breakdown */}
         <div className="lg:col-span-7 space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-base font-bold text-slate-900 dark:text-white font-display">
@@ -395,7 +384,6 @@ export function DashboardView({
               Range: 0 - 100 points
             </span>
           </div>
-
           <div className="grid grid-cols-1 sm:grid-cols-2 gap-4">
             {domainKeys.map((key) => {
               const domain = DOMAINS[key];
@@ -432,11 +420,10 @@ export function DashboardView({
                       onClick={() => setExpandedDomain(isExpanded ? null : key)}
                       className="min-h-[44px] min-w-[44px] flex items-center justify-center text-xs font-bold text-[#1b4e45] dark:text-[#d7f78c] hover:underline p-1"
                     >
-                      {isExpanded ? 'Hide math' : 'View math'}
+                      {hasSelfAssessment ? (isExpanded ? 'Hide math' : 'View math') : 'Quiz score'}
                     </button>
                   </div>
 
-                  {/* Visual Progress Bar */}
                   <div className="w-full h-2 rounded-full bg-slate-100 dark:bg-slate-800 overflow-hidden mt-3">
                     <div
                       className="h-full transition-all duration-700 ease-out rounded-full"
@@ -446,13 +433,11 @@ export function DashboardView({
                       }}
                     />
                   </div>
-
                   <p className="text-xs text-slate-700 dark:text-slate-300 mt-2.5 leading-relaxed line-clamp-2">
                     {domain.description}
                   </p>
 
-                  {/* Mathematical breakdown if expanded */}
-                  {isExpanded && detail && (
+                  {isExpanded && hasSelfAssessment && detail && (
                     <div className="mt-3 pt-3 border-t border-slate-100 dark:border-slate-800 space-y-1.5 text-xs text-slate-700 dark:text-slate-300 font-mono">
                       <div className="text-[11px] font-sans font-bold text-slate-600 dark:text-slate-400 uppercase tracking-wider mb-1">
                         Weighted Factor Breakdown
@@ -486,7 +471,6 @@ export function DashboardView({
         </div>
       </div>
 
-      {/* Inputs Behind These Scores: Transparent Calibration Table */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-5">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 border-b border-slate-100 dark:border-slate-800 pb-3">
           <div>
@@ -508,7 +492,7 @@ export function DashboardView({
         </div>
 
         <p className="text-xs text-slate-600 dark:text-slate-300 leading-relaxed max-w-3xl">
-          SkillPath AI scores combine two complementary student signals: <strong>60% self-reported practice habits</strong> (reflecting sustained commitment and study patterns) and <strong>40% measured diagnostic screening</strong> (evaluating practical code tracing, table analysis, grammar clarity, and visual hierarchy).
+          When both inputs are available, scores use 60% self-report and 40% measured quiz. With only one input, that input supplies the score. Missing inputs are not treated as a personal score.
         </p>
 
         <div className="overflow-x-auto rounded-xl border border-slate-200 dark:border-slate-800">
@@ -517,10 +501,10 @@ export function DashboardView({
               <tr>
                 <th className="px-4 py-3 text-left font-mono uppercase tracking-wider">Domain</th>
                 <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">
-                  Self-Reported ({Math.round(SELF_REPORTED_WEIGHT * 100)}%)
+                  Self-Reported ({hasSelfAssessment ? (latestQuizAttempt ? 60 : 100) : 0}%)
                 </th>
                 <th className="px-4 py-3 text-center font-mono uppercase tracking-wider">
-                  Aptitude Quiz ({Math.round(QUIZ_WEIGHT * 100)}%)
+                  Aptitude Quiz ({latestQuizAttempt ? (hasSelfAssessment ? 40 : 100) : 0}%)
                 </th>
                 <th className="px-4 py-3 text-center font-mono uppercase tracking-wider bg-[#276459]/5 dark:bg-[#d7f78c]/10 text-[#1b4e45] dark:text-[#d7f78c] font-bold">
                   Final Calibrated Score
@@ -533,8 +517,7 @@ export function DashboardView({
                 const selfScore = selfReportedScores ? selfReportedScores[key] : domainDetails[key]?.score || 0;
                 const quizScore = latestQuizAttempt ? latestQuizAttempt.domainScores[key] : null;
                 const finalScore = domainScores[key] || 0;
-                const delta = quizScore !== null ? finalScore - selfScore : 0;
-
+                const delta = quizScore !== null && hasSelfAssessment ? finalScore - selfScore : 0;
                 return (
                   <tr key={key} className="hover:bg-slate-50/50 dark:hover:bg-slate-800/40">
                     <td className="px-4 py-3 font-sans font-bold text-slate-900 dark:text-white flex items-center gap-2">
@@ -545,7 +528,7 @@ export function DashboardView({
                       {DOMAINS[key].name}
                     </td>
                     <td className="px-4 py-3 text-center text-slate-700 dark:text-slate-300">
-                      {selfScore} pts
+                      {hasSelfAssessment ? `${selfScore} pts` : "Not assessed"}
                     </td>
                     <td className="px-4 py-3 text-center">
                       {quizScore !== null ? (
@@ -587,26 +570,10 @@ export function DashboardView({
             </tbody>
           </table>
         </div>
-
-        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3 text-xs text-slate-500 pt-2 border-t border-slate-100 dark:border-slate-800">
-          <span>
-            {latestQuizAttempt
-              ? `Calibrated with attempt from ${latestQuizAttempt.dateLabel} (${latestQuizAttempt.mode.toUpperCase()} mode).`
-              : 'Take the Aptitude Quiz to test your practical heuristics and calibrate your scores.'}
-          </span>
-          <button
-            onClick={() => onNavigate('method')}
-            className="text-[#1b4e45] dark:text-[#d7f78c] font-semibold hover:underline"
-          >
-            How scoring works →
-          </button>
-        </div>
       </section>
 
-      {/* Study Vault Evidence & Upcoming Deadlines (Display Only - Does not alter career scores) */}
+      {/* Study Vault Evidence & Upcoming Deadlines */}
       <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        
-        {/* CARD 1: EVIDENCE IN YOUR VAULT */}
         <div className="p-6 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-5">
           <div>
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -628,7 +595,6 @@ export function DashboardView({
               </span>
             </div>
 
-            {/* 4 Domain Count Grid */}
             <div className="grid grid-cols-2 gap-3 mt-4">
               {domainKeys.map((key) => {
                 const count = vaultCountByDomain[key];
@@ -655,7 +621,6 @@ export function DashboardView({
               })}
             </div>
 
-            {/* Note on Career Scores */}
             <p className="text-[11px] text-slate-500 dark:text-slate-400 italic mt-3">
               Display only • Vault data does NOT change career scores or algorithmic weighting.
             </p>
@@ -674,7 +639,6 @@ export function DashboardView({
           </div>
         </div>
 
-        {/* CARD 2: UPCOMING DEADLINES */}
         <div className="p-6 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs flex flex-col justify-between space-y-5">
           <div>
             <div className="flex items-center justify-between gap-2 border-b border-slate-100 dark:border-slate-800 pb-3">
@@ -696,7 +660,6 @@ export function DashboardView({
               </span>
             </div>
 
-            {/* Deadline Items List */}
             <div className="space-y-2.5 mt-4">
               {upcomingDeadlines.length === 0 ? (
                 <div className="p-6 rounded-2xl bg-slate-50 dark:bg-slate-900/40 border border-slate-100 dark:border-slate-800 text-center space-y-1">
@@ -782,7 +745,6 @@ export function DashboardView({
         </div>
       </section>
 
-      {/* Top Pathway Highlight Hero Box */}
       {topFit && (
         <section className="p-6 sm:p-8 rounded-3xl bg-gradient-to-r from-[#17333b] to-[#20444f] text-white dark:from-[#132c33] dark:to-[#0f2228] border border-[#276459]/40 shadow-xl space-y-6">
           <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
@@ -798,8 +760,6 @@ export function DashboardView({
                 {topFit.career.summary}
               </p>
             </div>
-
-            {/* Big Match Score */}
             <div className="bg-white/10 dark:bg-white/5 backdrop-blur-sm p-4 rounded-2xl border border-white/15 text-center shrink-0">
               <span className="block text-xs uppercase tracking-wider text-[#d7f78c] font-semibold">
                 Competency Match
@@ -811,7 +771,6 @@ export function DashboardView({
             </div>
           </div>
 
-          {/* Details strip */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-4 pt-4 border-t border-white/10 text-xs text-slate-200">
             <div>
               <span className="block text-[#d7f78c] font-semibold uppercase tracking-wider text-[11px] mb-1">
@@ -833,14 +792,13 @@ export function DashboardView({
             </div>
           </div>
 
-          {/* Actions with 44px tap targets */}
           <div className="pt-2 flex flex-wrap items-center gap-3">
             <button
               onClick={() => onNavigate('plan')}
               className="min-h-[44px] px-5 py-2.5 rounded-xl bg-[#d7f78c] hover:bg-[#cbf476] text-[#17333b] font-bold text-xs shadow-md transition-all duration-200 hover:-translate-y-0.5 inline-flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-white"
             >
               <CalendarIcon className="w-4 h-4" />
-              View Custom 30-Day Action Roadmap
+              <span>View Custom 30-Day Action Roadmap</span>
               <ArrowRightIcon className="w-4 h-4" />
             </button>
             <button
@@ -848,13 +806,12 @@ export function DashboardView({
               className="min-h-[44px] px-5 py-2.5 rounded-xl bg-white/10 hover:bg-white/20 text-white font-semibold text-xs border border-white/20 transition-all duration-200 hover:-translate-y-0.5 inline-flex items-center gap-2 focus-visible:ring-2 focus-visible:ring-white"
             >
               <BriefcaseIcon className="w-4 h-4" />
-              Compare All 5 Pathways
+              <span>Compare All 5 Pathways</span>
             </button>
           </div>
         </section>
       )}
 
-      {/* Secondary Pathways Strip */}
       <section className="space-y-4">
         <div className="flex items-center justify-between">
           <h2 className="text-base font-bold text-slate-900 dark:text-white font-display">
@@ -867,7 +824,6 @@ export function DashboardView({
             Explore all profiles →
           </button>
         </div>
-
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
           {careerFits.slice(1).map((fit, idx) => (
             <div

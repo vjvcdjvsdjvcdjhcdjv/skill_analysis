@@ -1,10 +1,7 @@
 /**
  * @license
  * SPDX-License-Identifier: Apache-2.0
- * Methodology & Scoring Engine Walkthrough:
- * Written with maximum clarity so two first-year engineering students can explain
- * and defend every mathematical principle to faculty or interviewers.
- * Accessible with sequential headings (no h1->h3 jumps), 44px tap targets, and AA contrast.
+ * Methodology & Scoring Engine Walkthrough
  */
 
 import React, { useState } from 'react';
@@ -15,15 +12,11 @@ import {
   SELF_REPORTED_WEIGHT,
   QUIZ_WEIGHT,
   CAREERS,
-  DOMAINS,
-  DomainKey,
 } from '../utils/scoring.ts';
 import {
   CalculatorIcon,
-  CheckCircleIcon,
   InfoIcon,
   SparklesIcon,
-  ArrowRightIcon,
   ZapIcon,
 } from '../components/icons.tsx';
 
@@ -32,18 +25,15 @@ interface MethodViewProps {
 }
 
 export function MethodView({ onNavigate }: MethodViewProps) {
-  // Interactive Live Formula Simulator state
   const [simMarksEnabled, setSimMarksEnabled] = useState<boolean>(true);
   const [simMarks, setSimMarks] = useState<number>(80);
   const [simConf, setSimConf] = useState<number>(70);
   const [simPrac, setSimPrac] = useState<number>(80);
   const [simSkill, setSimSkill] = useState<number>(70);
 
-  // Aptitude Quiz simulator state
   const [simQuizEnabled, setSimQuizEnabled] = useState<boolean>(true);
   const [simQuizScore, setSimQuizScore] = useState<number>(85);
 
-  // Compute live simulated self-reported score
   const simResult = calculateDomainScore({
     marks: simMarksEnabled ? simMarks : null,
     confidence: simConf,
@@ -51,15 +41,12 @@ export function MethodView({ onNavigate }: MethodViewProps) {
     skill: simSkill,
   });
 
-  // Compute calibrated score combining self-reported and quiz
   const simCalibratedScore = simQuizEnabled
     ? calculateCombinedScore(simResult.score, simQuizScore)
     : simResult.score;
 
   return (
     <div className="max-w-4xl mx-auto space-y-12 pb-16">
-      
-      {/* Header */}
       <div className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-3">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
           <CalculatorIcon className="w-4 h-4" />
@@ -73,7 +60,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </p>
       </div>
 
-      {/* Honest Tone Disclosure */}
       <div className="p-5 rounded-2xl bg-amber-50 dark:bg-amber-950/30 border border-amber-200 dark:border-amber-900/50 flex items-start gap-3.5 text-xs text-amber-900 dark:text-amber-200">
         <InfoIcon className="w-5 h-5 text-amber-700 dark:text-amber-400 shrink-0 mt-0.5" />
         <div className="space-y-1">
@@ -84,7 +70,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </div>
       </div>
 
-      {/* Principle 1: The Core Formula */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div>
           <span className="text-xs font-mono font-bold text-[#1b4e45] dark:text-[#d7f78c] uppercase tracking-wider">
@@ -98,12 +83,10 @@ export function MethodView({ onNavigate }: MethodViewProps) {
           </p>
         </div>
 
-        {/* Formula Box */}
         <div className="p-4 sm:p-5 rounded-2xl bg-[#f6f8f6] dark:bg-[#0e1c20] border border-slate-200 dark:border-slate-800 font-mono text-xs sm:text-sm text-[#17333b] dark:text-[#d7f78c] overflow-x-auto text-center font-bold">
           Domain Score = 0.20 * Marks + 0.30 * Confidence + 0.40 * Practice + 0.10 * Skill
         </div>
 
-        {/* Weight Rationale Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-4 gap-4 text-xs">
           <div className="p-4 rounded-xl border border-slate-200 dark:border-slate-800 bg-slate-50/60 dark:bg-slate-900/40">
             <span className="font-mono text-base font-extrabold text-[#1b4e45] dark:text-[#d7f78c] block">
@@ -151,7 +134,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
           </div>
         </div>
 
-        {/* Rescaling Section */}
         <div className="p-5 rounded-2xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200/80 dark:border-slate-800 space-y-3">
           <h3 className="text-sm font-bold text-slate-900 dark:text-white font-display">
             Rescaling Mechanics When Academic Marks Are Omitted
@@ -176,7 +158,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </div>
       </section>
 
-      {/* Principle 2: Aptitude Quiz Integration */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div>
           <span className="text-xs font-mono font-bold text-[#1b4e45] dark:text-[#d7f78c] uppercase tracking-wider">
@@ -190,7 +171,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
           </p>
         </div>
 
-        {/* Formula Box */}
         <div className="p-4 sm:p-5 rounded-2xl bg-[#f6f8f6] dark:bg-[#0e1c20] border border-slate-200 dark:border-slate-800 font-mono text-xs sm:text-sm text-[#17333b] dark:text-[#d7f78c] overflow-x-auto text-center font-bold">
           Final Domain Score = {SELF_REPORTED_WEIGHT.toFixed(1)} * Self-Reported Score + {QUIZ_WEIGHT.toFixed(1)} * Measured Quiz Score
         </div>
@@ -222,7 +202,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </div>
       </section>
 
-      {/* Interactive Formula Playground / Simulator */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4">
           <div>
@@ -237,7 +216,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
             </p>
           </div>
 
-          {/* Toggle Marks Inclusion with 44px tap target */}
           <div className="flex items-center gap-3">
             <label className="text-xs font-bold text-slate-700 dark:text-slate-300">
               Include Course Marks:
@@ -258,10 +236,7 @@ export function MethodView({ onNavigate }: MethodViewProps) {
           </div>
         </div>
 
-        {/* Sliders Grid */}
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-6 pt-2">
-          
-          {/* Practice */}
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
               <span className="font-bold text-slate-900 dark:text-white">Practice Habits ({Math.round(simResult.weights.practice * 100)}% weight)</span>
@@ -280,7 +255,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
             </span>
           </div>
 
-          {/* Confidence */}
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
               <span className="font-bold text-slate-900 dark:text-white">Confidence ({Math.round(simResult.weights.confidence * 100)}% weight)</span>
@@ -299,7 +273,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
             </span>
           </div>
 
-          {/* Academic Marks */}
           <div className={`space-y-2 ${!simMarksEnabled ? 'opacity-40' : ''}`}>
             <div className="flex justify-between text-xs">
               <span className="font-bold text-slate-900 dark:text-white">
@@ -321,7 +294,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
             </span>
           </div>
 
-          {/* Skill Rating */}
           <div className="space-y-2">
             <div className="flex justify-between text-xs">
               <span className="font-bold text-slate-900 dark:text-white">Skill Self-Rating ({Math.round(simResult.weights.skill * 100)}% weight)</span>
@@ -340,7 +312,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
             </span>
           </div>
 
-          {/* Optional Aptitude Quiz Calibration Slider */}
           <div className="sm:col-span-2 pt-4 border-t border-slate-200 dark:border-slate-800 space-y-3">
             <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-2">
               <div className="flex items-center gap-2">
@@ -385,7 +356,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
           </div>
         </div>
 
-        {/* Calculated Result Banner */}
         <div className="p-6 rounded-2xl bg-[#17333b] text-white dark:bg-[#0e1c20] dark:border dark:border-[#276459]/40 flex flex-col md:flex-row items-center justify-between gap-6">
           <div className="space-y-1">
             <span className="text-xs uppercase font-bold text-[#d7f78c] tracking-wider block">
@@ -432,7 +402,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </div>
       </section>
 
-      {/* Principle 3: Career Matching Dot Product */}
       <section className="p-6 sm:p-8 rounded-3xl bg-white dark:bg-[#14262b] border border-slate-200/80 dark:border-slate-800 shadow-xs space-y-6">
         <div>
           <span className="text-xs font-mono font-bold text-[#1b4e45] dark:text-[#d7f78c] uppercase tracking-wider">
@@ -467,7 +436,7 @@ export function MethodView({ onNavigate }: MethodViewProps) {
                     className={isFrontend ? 'bg-[#d7f78c]/15 dark:bg-[#d7f78c]/10 font-bold' : ''}
                   >
                     <td className="py-3 px-3 font-sans text-slate-900 dark:text-white">
-                      {c.title} {isFrontend && '★ Top Match'}
+                      {c.title} {isFrontend && '• Top Match'}
                     </td>
                     <td className="py-3 px-3">{Math.round(c.weights.programming * 100)}%</td>
                     <td className="py-3 px-3">{Math.round(c.weights.analytical * 100)}%</td>
@@ -484,7 +453,6 @@ export function MethodView({ onNavigate }: MethodViewProps) {
         </div>
       </section>
 
-      {/* Defense Guide for Students */}
       <section className="p-6 sm:p-8 rounded-3xl bg-slate-50 dark:bg-slate-900/50 border border-slate-200 dark:border-slate-800 space-y-4">
         <div className="flex items-center gap-2 text-xs font-bold uppercase tracking-wider text-[#1b4e45] dark:text-[#d7f78c]">
           <SparklesIcon className="w-4 h-4" />

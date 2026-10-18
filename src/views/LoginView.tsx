@@ -2,23 +2,10 @@
  * @license
  * SPDX-License-Identifier: Apache-2.0
  * Full-Screen Authentication Entry Gate (#login)
- * Requirements:
- * 1. Fills the entire viewport (h-screen / w-screen, no outer scroll on desktop).
- * 2. Desktop split screen:
- *    - Left 55%: Brand panel with slow animated gradient (ink #17333b -> teal #276459 with mint #d7f78c glow),
- *      wordmark logo, headline "Find your path in tech", and 3 short value props:
- *      * "Your scores, explained" (transparent formula, no black box)
- *      * "30-day plan that saves your progress"
- *      * "Private by default: only you can see your data"
- *    - Right 45%: Form card with:
- *      * Tabs: "Log in" and "Create account"
- *      * Order: "Continue with Google" -> divider "or" -> Email Form -> divider "or" -> "Continue as guest"
- * 3. Mobile (< 760px): Single column, brand header on top, form below, no sideways scroll, min 44px tap targets.
- * 4. Honest tone: "Self-reported, not validated. An exploration tool, not a verdict."
- * 5. Password strength meter (4 levels), show/hide toggles, neutral password reset feedback, friendly error messages.
  */
 
 import React, { useState, useId } from 'react';
+import {AuthCaptcha,captchaSiteKey} from '../components/AuthCaptcha.tsx';
 import { PageId } from '../components/TopBar.tsx';
 import {
   CompassIcon,
@@ -63,24 +50,22 @@ export function LoginView({
   onToggleDarkMode,
   isInsideApp = false,
 }: LoginViewProps) {
+  const [captchaToken,setCaptchaToken]=useState('');
+  const [captchaRevision,setCaptchaRevision]=useState(0);
   const [mode, setMode] = useState<AuthMode>('login');
 
-  // Form Fields
   const [name, setName] = useState('');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
 
-  // Password Visibility Toggles
   const [showPassword, setShowPassword] = useState(false);
   const [showConfirmPassword, setShowConfirmPassword] = useState(false);
 
-  // States
   const [isLoading, setIsLoading] = useState(false);
   const [authError, setAuthError] = useState<string | null>(null);
   const [successNotice, setSuccessNotice] = useState<string | null>(null);
 
-  // Accessible unique IDs
   const loginEmailId = useId();
   const loginPasswordId = useId();
   const signupNameId = useId();
@@ -89,11 +74,10 @@ export function LoginView({
   const signupConfirmPasswordId = useId();
   const forgotEmailId = useId();
 
-  // Password strength calculator (0 = None, 1 = Weak, 2 = Fair, 3 = Good, 4 = Strong)
   const passwordStrength = React.useMemo(() => {
     if (!password) return 0;
     let score = 0;
-    if (password.length >= 6) score += 1;
+    if (password.length >= 8) score += 1;
     if (password.length >= 10) score += 1;
     if (/[A-Z]/.test(password) && /[a-z]/.test(password)) score += 1;
     if (/[0-9]/.test(password) || /[^A-Za-z0-9]/.test(password)) score += 1;
@@ -109,15 +93,12 @@ export function LoginView({
     'bg-emerald-500',
   ];
 
-  // Friendly human-readable authentication error message mapper
   const formatAuthError = (err: unknown): string => {
     const rawMsg = err instanceof Error ? err.message : String(err);
     const msg = rawMsg.toLowerCase();
-
     if (rawMsg.includes('not configured')) {
-      return 'Supabase is not configured yet! Please open src/services/supabase.ts and paste your Project URL and Publishable Key.';
+      return 'Supabase is not configured yet! Please ask the site owner to configure the Supabase environment variables.';
     }
-
     if (
       msg.includes('auth/invalid-credential') ||
       msg.includes('auth/wrong-password') ||
@@ -127,7 +108,6 @@ export function LoginView({
     ) {
       return 'Incorrect email or password. Please verify your credentials or reset your password.';
     }
-
     if (
       msg.includes('auth/email-already-in-use') ||
       msg.includes('user already registered') ||
@@ -135,52 +115,45 @@ export function LoginView({
     ) {
       return 'An account already exists with this email address. Please log in instead.';
     }
-
     if (
       msg.includes('auth/weak-password') ||
       msg.includes('password should be at least') ||
       msg.includes('weak-password')
     ) {
-      return 'Password is too weak. Please use at least 6 characters.';
+      return 'Password is too weak. Please use at least 8 characters.';
     }
-
     if (msg.includes('email not confirmed')) {
-      return 'Please check your email and confirm your account before logging in (or disable "Confirm email" in Supabase Auth Settings).';
+      return 'Please check your email and confirm your account before logging in.';
     }
-
     if (msg.includes('auth/too-many-requests') || msg.includes('rate limit')) {
       return 'Too many attempts. Access is temporarily restricted for security; please try again shortly.';
     }
-
     if (msg.includes('auth/network-request-failed') || msg.includes('fetch failed')) {
       return 'Network connection issue. Please check your internet connection.';
     }
-
     if (msg.includes('auth/invalid-email') || msg.includes('valid email')) {
       return 'Please enter a valid email address.';
     }
-
     return rawMsg || 'An authentication error occurred. Please check your details and try again.';
   };
 
-  // Google Sign-In
   const handleGoogleSignIn = async () => {
     if (isLoading) return;
     setIsLoading(true);
     setAuthError(null);
     setSuccessNotice(null);
     try {
-      const user = await loginWithGoogle();
-      onLoginSuccess(user);
+      await loginWithGoogle();
+      setSuccessNotice('Opening Google sign-in…');
     } catch (err: unknown) {
       console.error('Google Sign-In error:', err);
       setAuthError(formatAuthError(err));
     } finally {
       setIsLoading(false);
+      setCaptchaRevision(v=>v+1);
     }
   };
 
-  // Email Submit Handler
   const handleEmailSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     if (isLoading) return;
@@ -189,7 +162,6 @@ export function LoginView({
 
     const emailTrimmed = email.trim();
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
     if (!emailTrimmed) {
       setAuthError('Please enter your email address.');
       return;
@@ -199,38 +171,35 @@ export function LoginView({
       return;
     }
 
-    // Forgot Password Flow
+    if (captchaSiteKey && !captchaToken) {setAuthError('Please complete the security check.');return;}
+
     if (mode === 'forgot') {
       setIsLoading(true);
       try {
-        await resetPassword(emailTrimmed);
+        await resetPassword(emailTrimmed,captchaToken || undefined);
+        setSuccessNotice('If an account with that email exists, we have sent password reset instructions. Check your inbox and spam folder.');
       } catch (err) {
-        console.warn('Password reset request error:', err);
+        setAuthError(formatAuthError(err));
       } finally {
         setIsLoading(false);
-        // Neutral message per specification: same whether or not the email exists
-        setSuccessNotice(
-          `If an account with that email exists, we've sent password reset instructions. Please check your inbox and spam folder.`
-        );
+      setCaptchaRevision(v=>v+1);
       }
       return;
     }
 
-    // Password Validation
     if (!password) {
       setAuthError('Please enter your password.');
       return;
     }
 
-    // Sign Up Flow
     if (mode === 'signup') {
       const trimmedName = name.trim();
       if (!trimmedName) {
         setAuthError('Please enter your full name for your student profile.');
         return;
       }
-      if (password.length < 6) {
-        setAuthError('Password must be at least 6 characters long.');
+      if (password.length < 8) {
+        setAuthError('Password must be at least 8 characters long.');
         return;
       }
       if (password !== confirmPassword) {
@@ -240,27 +209,30 @@ export function LoginView({
 
       setIsLoading(true);
       try {
-        const user = await signUpWithEmail(emailTrimmed, password, trimmedName);
-        onLoginSuccess(user);
+        const user = await signUpWithEmail(emailTrimmed, password, trimmedName,captchaToken || undefined);
+        if (user) { onLoginSuccess(user); onNavigate('home'); }
+        else { setSuccessNotice('Check your email to confirm your account, then sign in.'); setPassword(''); setConfirmPassword(''); }
       } catch (err) {
         console.error('Sign up error:', err);
         setAuthError(formatAuthError(err));
       } finally {
         setIsLoading(false);
+      setCaptchaRevision(v=>v+1);
       }
       return;
     }
 
-    // Log In Flow
     setIsLoading(true);
     try {
-      const user = await loginWithEmail(emailTrimmed, password);
+      const user = await loginWithEmail(emailTrimmed, password,captchaToken || undefined);
       onLoginSuccess(user);
+      onNavigate('home');
     } catch (err) {
       console.error('Sign in error:', err);
       setAuthError(formatAuthError(err));
     } finally {
       setIsLoading(false);
+      setCaptchaRevision(v=>v+1);
     }
   };
 
@@ -275,19 +247,11 @@ export function LoginView({
 
   return (
     <div className="w-full min-h-screen lg:h-screen lg:overflow-hidden flex flex-col lg:flex-row bg-[#f6f8f6] dark:bg-[#0e1c20] text-[#17333b] dark:text-[#f0f5f3] transition-colors">
-      
-      {/* ======================================================== */}
-      {/* LEFT 55%: BRAND PANEL (Slow animated gradient + mint glow) */}
-      {/* ======================================================== */}
+      {/* LEFT 55%: BRAND PANEL */}
       <div className="w-full lg:w-[55%] lg:h-full relative p-6 sm:p-10 lg:p-12 xl:p-16 flex flex-col justify-between overflow-hidden brand-gradient-panel text-white shrink-0">
-        
-        {/* Subtle slow animated background glows (mint glow #d7f78c + teal glow #276459) */}
-        <div
-          className="absolute -top-24 -right-24 w-96 h-96 bg-[#d7f78c] rounded-full blur-3xl pointer-events-none mint-glow-animated"
-        />
+        <div className="absolute -top-24 -right-24 w-96 h-96 bg-[#d7f78c] rounded-full blur-3xl pointer-events-none mint-glow-animated" />
         <div className="absolute -bottom-24 -left-24 w-96 h-96 bg-[#276459]/40 rounded-full blur-3xl pointer-events-none" />
 
-        {/* Top: Wordmark & Mobile Theme Toggle */}
         <div className="relative z-10 flex items-center justify-between">
           <div className="flex items-center gap-3">
             <div className="w-10 h-10 rounded-xl bg-[#d7f78c] text-[#17333b] flex items-center justify-center shadow-md shrink-0">
@@ -302,7 +266,7 @@ export function LoginView({
               </span>
             </div>
           </div>
-          {/* Theme toggle on mobile inside brand panel */}
+
           <button
             onClick={onToggleDarkMode}
             aria-label={isDarkMode ? 'Switch to light mode' : 'Switch to dark mode'}
@@ -312,7 +276,6 @@ export function LoginView({
           </button>
         </div>
 
-        {/* Middle: Headline & 3 Value Props */}
         <div className="relative z-10 my-8 lg:my-auto space-y-6 max-w-xl">
           <div className="space-y-3">
             <h1 className="text-3xl sm:text-4xl xl:text-5xl font-extrabold font-display leading-[1.15] text-white tracking-tight">
@@ -323,10 +286,7 @@ export function LoginView({
             </p>
           </div>
 
-          {/* 3 Short Value Props with Icons */}
           <div className="space-y-4 pt-2 border-t border-white/10 text-xs sm:text-sm">
-            
-            {/* Prop 1 */}
             <div className="flex items-start gap-3.5">
               <div className="w-8 h-8 rounded-lg bg-[#d7f78c]/20 text-[#d7f78c] flex items-center justify-center shrink-0 mt-0.5">
                 <SparklesIcon className="w-4 h-4" />
@@ -341,7 +301,6 @@ export function LoginView({
               </div>
             </div>
 
-            {/* Prop 2 */}
             <div className="flex items-start gap-3.5">
               <div className="w-8 h-8 rounded-lg bg-[#d7f78c]/20 text-[#d7f78c] flex items-center justify-center shrink-0 mt-0.5">
                 <CalendarIcon className="w-4 h-4" />
@@ -356,7 +315,6 @@ export function LoginView({
               </div>
             </div>
 
-            {/* Prop 3 */}
             <div className="flex items-start gap-3.5">
               <div className="w-8 h-8 rounded-lg bg-[#d7f78c]/20 text-[#d7f78c] flex items-center justify-center shrink-0 mt-0.5">
                 <ShieldIcon className="w-4 h-4" />
@@ -373,18 +331,13 @@ export function LoginView({
           </div>
         </div>
 
-        {/* Bottom Honest Tone Disclaimer */}
         <div className="relative z-10 pt-4 text-[11px] text-slate-400 font-medium border-t border-white/10">
           Self-reported, not validated. An exploration tool, not a verdict.
         </div>
       </div>
 
-      {/* ======================================================== */}
-      {/* RIGHT 45%: THE FORM CARD                                 */}
-      {/* ======================================================== */}
+      {/* RIGHT 45%: THE FORM CARD */}
       <div className="w-full lg:w-[45%] lg:h-full flex flex-col justify-between p-6 sm:p-10 lg:p-12 overflow-y-auto bg-white dark:bg-[#14262b] relative">
-        
-        {/* Desktop Top Bar: Theme Toggle & Return to app link if guest */}
         <div className="w-full flex items-center justify-between pb-4">
           {isInsideApp ? (
             <button
@@ -405,10 +358,7 @@ export function LoginView({
           </button>
         </div>
 
-        {/* Central Form Container */}
         <div className="max-w-md mx-auto w-full my-auto space-y-5 py-4">
-          
-          {/* If already logged in: show connected status */}
           {currentUser ? (
             <div className="space-y-6 animate-in fade-in duration-150">
               <div className="space-y-1">
@@ -448,10 +398,10 @@ export function LoginView({
 
               <div className="space-y-2.5 pt-2">
                 <button
-                  onClick={() => onNavigate('dashboard')}
+                  onClick={() => onNavigate('home')}
                   className="w-full min-h-[44px] px-5 py-2.5 rounded-xl bg-[#17333b] hover:bg-[#20444f] dark:bg-[#d7f78c] dark:hover:bg-[#cbf476] text-white dark:text-[#17333b] font-bold text-xs shadow-md transition-all flex items-center justify-center gap-2"
                 >
-                  <span>Go to Dashboard</span>
+                  <span>Go to home</span>
                   <ArrowRightIcon className="w-4 h-4" />
                 </button>
                 <button
@@ -463,10 +413,7 @@ export function LoginView({
               </div>
             </div>
           ) : (
-            /* Auth Form */
             <div className="space-y-4">
-              
-              {/* Header text */}
               <div>
                 <h2 className="text-2xl font-extrabold text-[#17333b] dark:text-white font-display">
                   {mode === 'signup'
@@ -484,7 +431,6 @@ export function LoginView({
                 </p>
               </div>
 
-              {/* Tabs: "Log in" and "Create account" */}
               {mode !== 'forgot' && (
                 <div
                   role="tablist"
@@ -528,7 +474,6 @@ export function LoginView({
                 </div>
               )}
 
-              {/* Error Banner with aria-live="polite" */}
               {authError && (
                 <div
                   role="alert"
@@ -540,7 +485,6 @@ export function LoginView({
                 </div>
               )}
 
-              {/* Success Notice with aria-live="polite" */}
               {successNotice && (
                 <div
                   role="status"
@@ -552,7 +496,6 @@ export function LoginView({
                 </div>
               )}
 
-              {/* 1. BUTTON: "Continue with Google" (Requested FIRST in order) */}
               {mode !== 'forgot' && (
                 <button
                   type="button"
@@ -582,7 +525,6 @@ export function LoginView({
                 </button>
               )}
 
-              {/* 2. DIVIDER "or" */}
               {mode !== 'forgot' && (
                 <div className="relative flex items-center justify-center my-2">
                   <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
@@ -593,10 +535,8 @@ export function LoginView({
                 </div>
               )}
 
-              {/* 3. EMAIL FORM */}
               <form onSubmit={handleEmailSubmit} className="space-y-3.5">
-                
-                {/* Name field (Signup only) */}
+                <AuthCaptcha onToken={setCaptchaToken} revision={captchaRevision}/>
                 {mode === 'signup' && (
                   <div>
                     <label
@@ -618,7 +558,6 @@ export function LoginView({
                   </div>
                 )}
 
-                {/* Email field */}
                 <div>
                   <label
                     htmlFor={mode === 'signup' ? signupEmailId : mode === 'forgot' ? forgotEmailId : loginEmailId}
@@ -638,7 +577,6 @@ export function LoginView({
                   />
                 </div>
 
-                {/* Password field (Login & Signup) */}
                 {mode !== 'forgot' && (
                   <div>
                     <div className="flex items-center justify-between mb-1">
@@ -683,7 +621,6 @@ export function LoginView({
                       </button>
                     </div>
 
-                    {/* Password Strength Meter (Signup only, 4 levels) */}
                     {mode === 'signup' && password.length > 0 && (
                       <div className="mt-2 space-y-1.5 animate-in fade-in">
                         <div className="grid grid-cols-4 gap-1.5">
@@ -707,7 +644,6 @@ export function LoginView({
                   </div>
                 )}
 
-                {/* Confirm Password field (Signup only) */}
                 {mode === 'signup' && (
                   <div>
                     <label
@@ -739,7 +675,6 @@ export function LoginView({
                   </div>
                 )}
 
-                {/* Submit Button with Loading State */}
                 <button
                   type="submit"
                   disabled={isLoading}
@@ -765,7 +700,6 @@ export function LoginView({
                   )}
                 </button>
 
-                {/* Back to Log In from Forgot Password */}
                 {mode === 'forgot' && (
                   <div className="text-center pt-1">
                     <button
@@ -783,7 +717,6 @@ export function LoginView({
                 )}
               </form>
 
-              {/* 4. DIVIDER "or" */}
               {mode !== 'forgot' && (
                 <div className="relative flex items-center justify-center my-2">
                   <div className="border-t border-slate-200 dark:border-slate-800 w-full" />
@@ -794,7 +727,6 @@ export function LoginView({
                 </div>
               )}
 
-              {/* 5. "Continue as guest" (Saves flag and navigates to #home) */}
               {mode !== 'forgot' && (
                 <button
                   type="button"
@@ -809,7 +741,6 @@ export function LoginView({
           )}
         </div>
 
-        {/* Footer info line */}
         <div className="pt-4 border-t border-slate-100 dark:border-slate-800 text-[11px] text-slate-500 dark:text-slate-400 leading-relaxed text-center">
           Zero-Trust Cloud Architecture. Diagnostic data is isolated to your profile.
         </div>
